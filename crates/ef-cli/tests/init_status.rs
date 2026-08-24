@@ -818,6 +818,68 @@ fn builds_a_deterministic_static_site_from_only_the_public_bundle() {
 }
 
 #[test]
+fn regenerates_an_identical_static_site_after_empty_repository_restore() {
+    let fixture = CheckpointFixture::new();
+    let source_bundles = ExportedBundles::from_repository(fixture.root());
+    let output_directory = TestDirectory::new();
+    let source_site = output_directory.as_ref().join("site-source");
+    let restored_site = output_directory.as_ref().join("site-restored");
+
+    let source_build = ef(&[
+        "static-build",
+        source_bundles.public.to_str().unwrap(),
+        "--output",
+        source_site.to_str().unwrap(),
+    ]);
+    assert!(source_build.status.success(), "{}", stderr(&source_build));
+
+    let restored_repository = TestDirectory::new();
+    let imported = ef(&[
+        "import",
+        source_bundles.public.to_str().unwrap(),
+        "--path",
+        restored_repository.as_ref().to_str().unwrap(),
+    ]);
+    assert!(imported.status.success(), "{}", stderr(&imported));
+    let restored_bundle_directory = TestDirectory::new();
+    let restored_bundle = restored_bundle_directory.as_ref().join("public.edge");
+    let reexported = ef(&[
+        "export",
+        "--path",
+        restored_repository.as_ref().to_str().unwrap(),
+        "--realm",
+        "public",
+        "--output",
+        restored_bundle.to_str().unwrap(),
+    ]);
+    assert!(reexported.status.success(), "{}", stderr(&reexported));
+    assert_eq!(
+        bundle_contents(&source_bundles.public),
+        bundle_contents(&restored_bundle)
+    );
+
+    let restored_build = ef(&[
+        "static-build",
+        restored_bundle.to_str().unwrap(),
+        "--output",
+        restored_site.to_str().unwrap(),
+    ]);
+    assert!(
+        restored_build.status.success(),
+        "{}",
+        stderr(&restored_build)
+    );
+    assert_eq!(
+        output_value(&source_build, "semantic-root: "),
+        output_value(&restored_build, "semantic-root: ")
+    );
+    assert_eq!(
+        directory_contents(&source_site),
+        directory_contents(&restored_site)
+    );
+}
+
+#[test]
 fn exports_and_verifies_composed_members_and_local_bundles() {
     let fixture = CheckpointFixture::new();
     let output_directory = TestDirectory::new();

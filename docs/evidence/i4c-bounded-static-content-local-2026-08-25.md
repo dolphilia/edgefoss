@@ -2,11 +2,12 @@
 
 - Increment: I4c, P3 bounded file-content delivery and recent timeline
 - Base commit: `5fb513971092fd419444776fb71c343652ea97b6`
-- Source state: local working tree; commit and CI confirmation pending
+- Source state: committed as `77558c855ed4097c5ba46fd5f311cc34c6589476`;
+  GitHub Actions success confirmed by the repository owner
 - Toolchain: Wrangler `4.125.0`, Node.js `24.19.0`, Rust `1.94.1`
 - Cloudflare state: no login, remote request, Worker, DO, R2, or other resource
-- Result: focused and full workspace verification, assets-only HTTP smoke, and
-  build pass; commit and CI confirmation pending
+- Result: focused and full workspace verification, assets-only HTTP smoke,
+  build, commit, and CI pass
 
 ## Demonstrated slice
 
