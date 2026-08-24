@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "edgefoss",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01,
+    },
+  },
+  "vars": {
+    "EDGEFOSS_ENV": "dev",
+  },
+  "env": {
+    "staging": {
+      "name": "edgefoss-staging",
+      "vars": {
+        "EDGEFOSS_ENV": "staging",
+      },
+    },
+    "production": {
+      "name": "edgefoss-production",
+      "vars": {
+        "EDGEFOSS_ENV": "production",
+      },
+    },
+  },
+}

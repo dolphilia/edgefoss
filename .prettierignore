@@ -1,0 +1,7 @@
+apps/worker/src/worker-configuration.d.ts
+docs/notes/
+docs/plans/
+pnpm-lock.yaml
+target/
+node_modules/
+
