@@ -25,6 +25,7 @@ pub enum FormatErrorCode {
     ResourceLimit,
     InvalidSchema,
     InvalidArtifactId,
+    PathCollision,
 }
 
 /// A rejected encoded value or artifact.
@@ -63,6 +64,70 @@ pub struct ProjectGenesis {
     pub actor_key: [u8; 32],
     /// UTC RFC 3339 timestamp with whole-second precision.
     pub created_at: String,
+}
+
+/// Common logical fields of a non-genesis artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactMeta {
+    pub project: String,
+    pub realm: Realm,
+    pub parents: Vec<String>,
+    pub actor_key: [u8; 32],
+    pub logical_clock: u64,
+    pub created_at: String,
+}
+
+/// The interpretation of a tree entry target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TreeEntryMode {
+    File,
+    Executable,
+    Directory,
+    Symlink,
+}
+
+impl TreeEntryMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Executable => "executable",
+            Self::Directory => "directory",
+            Self::Symlink => "symlink",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "file" => Some(Self::File),
+            "executable" => Some(Self::Executable),
+            "directory" => Some(Self::Directory),
+            "symlink" => Some(Self::Symlink),
+            _ => None,
+        }
+    }
+}
+
+/// One immediate child of a tree artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeEntry {
+    pub name: String,
+    pub mode: TreeEntryMode,
+    pub target: String,
+}
+
+/// Logical inputs to a schema-0 `tree` artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeArtifact {
+    pub meta: ArtifactMeta,
+    pub entries: Vec<TreeEntry>,
+}
+
+/// Logical inputs to a schema-0 `change` artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeArtifact {
+    pub meta: ArtifactMeta,
+    pub root: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -507,7 +572,11 @@ fn map_get<'a>(entries: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
         .find_map(|(candidate, value)| (candidate == key).then_some(value))
 }
 
-fn expect_exact_keys(entries: &[(String, Value)], expected: &[&str]) -> Result<(), FormatError> {
+fn expect_exact_keys(
+    entries: &[(String, Value)],
+    expected: &[&str],
+    label: &str,
+) -> Result<(), FormatError> {
     if entries.len() != expected.len()
         || entries
             .iter()
@@ -515,7 +584,7 @@ fn expect_exact_keys(entries: &[(String, Value)], expected: &[&str]) -> Result<(
     {
         return Err(FormatError::new(
             FormatErrorCode::InvalidSchema,
-            "fields do not match project.genesis schema 0",
+            format!("{label} fields do not match schema 0"),
         ));
     }
     Ok(())
@@ -546,7 +615,7 @@ pub fn decode_project_genesis(bytes: &[u8]) -> Result<ProjectGenesis, FormatErro
         "created_at",
         "payload",
     ];
-    expect_exact_keys(&envelope, &envelope_keys)?;
+    expect_exact_keys(&envelope, &envelope_keys, "project.genesis envelope")?;
     let constants_valid = matches!(map_get(&envelope, "format"), Some(Value::Text(value)) if value == "edgefossil-artifact")
         && matches!(map_get(&envelope, "version"), Some(Value::UInt(0)))
         && matches!(map_get(&envelope, "kind"), Some(Value::Text(value)) if value == "project.genesis")
@@ -578,7 +647,11 @@ pub fn decode_project_genesis(bytes: &[u8]) -> Result<ProjectGenesis, FormatErro
             "payload must be a map",
         ));
     };
-    expect_exact_keys(payload, &["name", "nonce", "policy_version"])?;
+    expect_exact_keys(
+        payload,
+        &["name", "nonce", "policy_version"],
+        "project.genesis payload",
+    )?;
     let (Some(Value::Text(name)), Some(Value::Bytes(nonce))) =
         (map_get(payload, "name"), map_get(payload, "nonce"))
     else {
@@ -605,6 +678,361 @@ pub fn decode_project_genesis(bytes: &[u8]) -> Result<ProjectGenesis, FormatErro
     };
     validate_genesis(&genesis)?;
     Ok(genesis)
+}
+
+fn validate_meta(meta: &ArtifactMeta, max_parents: usize) -> Result<(), FormatError> {
+    parse_artifact_id(&meta.project)?;
+    if !valid_timestamp(&meta.created_at) {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "created_at is invalid",
+        ));
+    }
+    if meta.parents.len() > max_parents {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "too many parents",
+        ));
+    }
+    let mut previous: Option<[u8; 32]> = None;
+    for parent in &meta.parents {
+        let digest = parse_artifact_id(parent)?;
+        if previous.is_some_and(|value| value >= digest) {
+            return Err(FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                "parents must be strictly sorted by raw digest",
+            ));
+        }
+        previous = Some(digest);
+    }
+    Ok(())
+}
+
+fn common_envelope(kind: &str, meta: &ArtifactMeta, payload: Value) -> Value {
+    Value::Map(vec![
+        ("format".into(), Value::Text("edgefossil-artifact".into())),
+        ("version".into(), Value::UInt(0)),
+        ("project".into(), Value::Text(meta.project.clone())),
+        ("kind".into(), Value::Text(kind.into())),
+        ("schema".into(), Value::UInt(0)),
+        ("realm".into(), Value::Text(meta.realm.as_str().into())),
+        (
+            "parents".into(),
+            Value::Array(meta.parents.iter().cloned().map(Value::Text).collect()),
+        ),
+        ("actor_key".into(), Value::Bytes(meta.actor_key.to_vec())),
+        ("logical_clock".into(), Value::UInt(meta.logical_clock)),
+        ("created_at".into(), Value::Text(meta.created_at.clone())),
+        ("payload".into(), payload),
+    ])
+}
+
+fn decode_meta(
+    envelope: &[(String, Value)],
+    kind: &str,
+    max_parents: usize,
+) -> Result<ArtifactMeta, FormatError> {
+    expect_exact_keys(
+        envelope,
+        &[
+            "format",
+            "version",
+            "project",
+            "kind",
+            "schema",
+            "realm",
+            "parents",
+            "actor_key",
+            "logical_clock",
+            "created_at",
+            "payload",
+        ],
+        kind,
+    )?;
+    let constants_valid = matches!(map_get(envelope, "format"), Some(Value::Text(value)) if value == "edgefossil-artifact")
+        && matches!(map_get(envelope, "version"), Some(Value::UInt(0)))
+        && matches!(map_get(envelope, "kind"), Some(Value::Text(value)) if value == kind)
+        && matches!(map_get(envelope, "schema"), Some(Value::UInt(0)));
+    if !constants_valid {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            format!("{kind} envelope constants are invalid"),
+        ));
+    }
+    let Some(Value::Text(project)) = map_get(envelope, "project") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "project must be text",
+        ));
+    };
+    let Some(Value::Text(realm)) = map_get(envelope, "realm") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "realm must be text",
+        ));
+    };
+    let realm = realm
+        .parse::<Realm>()
+        .map_err(|_| FormatError::new(FormatErrorCode::InvalidSchema, "unknown realm"))?;
+    let Some(Value::Array(parent_values)) = map_get(envelope, "parents") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "parents must be an array",
+        ));
+    };
+    let parents = parent_values
+        .iter()
+        .map(|value| match value {
+            Value::Text(parent) => Ok(parent.clone()),
+            _ => Err(FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                "parent IDs must be text",
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some(Value::Bytes(actor_key)) = map_get(envelope, "actor_key") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "actor_key must be bytes",
+        ));
+    };
+    let Some(Value::UInt(logical_clock)) = map_get(envelope, "logical_clock") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "logical_clock must be uint",
+        ));
+    };
+    let Some(Value::Text(created_at)) = map_get(envelope, "created_at") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "created_at must be text",
+        ));
+    };
+    let meta = ArtifactMeta {
+        project: project.clone(),
+        realm,
+        parents,
+        actor_key: actor_key.as_slice().try_into().map_err(|_| {
+            FormatError::new(FormatErrorCode::InvalidSchema, "actor_key must be 32 bytes")
+        })?,
+        logical_clock: *logical_clock,
+        created_at: created_at.clone(),
+    };
+    validate_meta(&meta, max_parents)?;
+    Ok(meta)
+}
+
+fn validate_symlink_target(target: &str) -> Result<(), FormatError> {
+    let bytes = target.as_bytes();
+    let drive_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if bytes.is_empty()
+        || bytes.len() > 4096
+        || !is_nfc(target)
+        || target.contains('\0')
+        || target.starts_with(['/', '\\'])
+        || drive_prefix
+    {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "symlink target is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_tree_entries(
+    entries: &[TreeEntry],
+    require_sorted: bool,
+) -> Result<Vec<TreeEntry>, FormatError> {
+    if entries.len() > 65_535 {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "tree has too many entries",
+        ));
+    }
+    let mut sorted = entries.to_vec();
+    sorted.sort_by(|left, right| left.name.as_bytes().cmp(right.name.as_bytes()));
+    let mut collision_keys = std::collections::HashSet::new();
+    for (index, entry) in sorted.iter().enumerate() {
+        validate_path(&entry.name).map_err(|error| {
+            FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                format!("invalid tree entry name: {error}"),
+            )
+        })?;
+        if entry.name.contains('/') {
+            return Err(FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                "tree entry name must be one segment",
+            ));
+        }
+        match entry.mode {
+            TreeEntryMode::Symlink => validate_symlink_target(&entry.target)?,
+            TreeEntryMode::File | TreeEntryMode::Executable | TreeEntryMode::Directory => {
+                parse_artifact_id(&entry.target)?;
+            }
+        }
+        if !collision_keys.insert(entry.name.to_ascii_lowercase()) {
+            return Err(FormatError::new(
+                FormatErrorCode::PathCollision,
+                "tree entry collision",
+            ));
+        }
+        if require_sorted && entries.get(index) != Some(entry) {
+            return Err(FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                "tree entries are not sorted by UTF-8 name",
+            ));
+        }
+    }
+    Ok(sorted)
+}
+
+/// Encodes one schema-0 `tree` artifact.
+///
+/// # Errors
+///
+/// Returns an error when metadata or a tree entry violates the v0 schema.
+pub fn encode_tree(tree: &TreeArtifact) -> Result<Vec<u8>, FormatError> {
+    validate_meta(&tree.meta, 0)?;
+    let entries = validate_tree_entries(&tree.entries, false)?
+        .into_iter()
+        .map(|entry| {
+            Value::Map(vec![
+                ("name".into(), Value::Text(entry.name)),
+                ("mode".into(), Value::Text(entry.mode.as_str().into())),
+                ("target".into(), Value::Text(entry.target)),
+            ])
+        })
+        .collect();
+    encode_value(&common_envelope(
+        "tree",
+        &tree.meta,
+        Value::Map(vec![("entries".into(), Value::Array(entries))]),
+    ))
+}
+
+/// Decodes one schema-0 `tree` artifact.
+///
+/// # Errors
+///
+/// Returns an error for non-canonical bytes or invalid metadata and entries.
+pub fn decode_tree(bytes: &[u8]) -> Result<TreeArtifact, FormatError> {
+    let Value::Map(envelope) = decode_canonical(bytes)? else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "artifact must be a map",
+        ));
+    };
+    let meta = decode_meta(&envelope, "tree", 0)?;
+    let Some(Value::Map(payload)) = map_get(&envelope, "payload") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "tree payload must be a map",
+        ));
+    };
+    expect_exact_keys(payload, &["entries"], "tree payload")?;
+    let Some(Value::Array(entry_values)) = map_get(payload, "entries") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "tree entries must be an array",
+        ));
+    };
+    let mut entries = Vec::with_capacity(entry_values.len());
+    for value in entry_values {
+        let Value::Map(entry) = value else {
+            return Err(FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                "tree entry must be a map",
+            ));
+        };
+        expect_exact_keys(entry, &["name", "mode", "target"], "tree entry")?;
+        let (Some(Value::Text(name)), Some(Value::Text(mode)), Some(Value::Text(target))) = (
+            map_get(entry, "name"),
+            map_get(entry, "mode"),
+            map_get(entry, "target"),
+        ) else {
+            return Err(FormatError::new(
+                FormatErrorCode::InvalidSchema,
+                "tree entry field types are invalid",
+            ));
+        };
+        entries.push(TreeEntry {
+            name: name.clone(),
+            mode: TreeEntryMode::parse(mode).ok_or_else(|| {
+                FormatError::new(FormatErrorCode::InvalidSchema, "tree entry mode is invalid")
+            })?,
+            target: target.clone(),
+        });
+    }
+    validate_tree_entries(&entries, true)?;
+    Ok(TreeArtifact { meta, entries })
+}
+
+fn validate_change(change: &ChangeArtifact) -> Result<(), FormatError> {
+    validate_meta(&change.meta, 32)?;
+    parse_artifact_id(&change.root)?;
+    if change.message.len() > 4096 || !is_nfc(&change.message) {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "change message must be NFC and at most 4096 UTF-8 bytes",
+        ));
+    }
+    Ok(())
+}
+
+/// Encodes one schema-0 `change` artifact.
+///
+/// # Errors
+///
+/// Returns an error when metadata or payload violates the v0 schema.
+pub fn encode_change(change: &ChangeArtifact) -> Result<Vec<u8>, FormatError> {
+    validate_change(change)?;
+    encode_value(&common_envelope(
+        "change",
+        &change.meta,
+        Value::Map(vec![
+            ("root".into(), Value::Text(change.root.clone())),
+            ("message".into(), Value::Text(change.message.clone())),
+        ]),
+    ))
+}
+
+/// Decodes one schema-0 `change` artifact.
+///
+/// # Errors
+///
+/// Returns an error for non-canonical bytes or invalid metadata and payload.
+pub fn decode_change(bytes: &[u8]) -> Result<ChangeArtifact, FormatError> {
+    let Value::Map(envelope) = decode_canonical(bytes)? else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "artifact must be a map",
+        ));
+    };
+    let meta = decode_meta(&envelope, "change", 32)?;
+    let Some(Value::Map(payload)) = map_get(&envelope, "payload") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "change payload must be a map",
+        ));
+    };
+    expect_exact_keys(payload, &["root", "message"], "change payload")?;
+    let (Some(Value::Text(root)), Some(Value::Text(message))) =
+        (map_get(payload, "root"), map_get(payload, "message"))
+    else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidSchema,
+            "change payload field types are invalid",
+        ));
+    };
+    let change = ChangeArtifact {
+        meta,
+        root: root.clone(),
+        message: message.clone(),
+    };
+    validate_change(&change)?;
+    Ok(change)
 }
 
 /// Computes the canonical text artifact identifier for already encoded bytes.

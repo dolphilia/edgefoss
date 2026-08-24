@@ -20,7 +20,8 @@ export type FormatErrorCode =
   | "duplicate_key"
   | "resource_limit"
   | "invalid_schema"
-  | "invalid_artifact_id";
+  | "invalid_artifact_id"
+  | "path_collision";
 
 export class FormatError extends Error {
   constructor(

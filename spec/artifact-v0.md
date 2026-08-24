@@ -87,3 +87,41 @@ Receivers validate in this order:
 5. project, realm, parent, policy, and signature constraints.
 
 Failure must not partially publish the artifact or advance a ref.
+
+## `tree`, schema 0
+
+A tree is one immutable directory. Its common envelope has `kind = "tree"`,
+`schema = 0`, and an empty `parents` array. Its payload has exactly one field,
+`entries`, containing 0–65535 entry maps.
+
+Each entry has exactly:
+
+| field    | type | rule                                                   |
+| -------- | ---- | ------------------------------------------------------ |
+| `name`   | text | one valid path-v0 segment; `/` forbidden               |
+| `mode`   | text | `file`, `executable`, `directory`, or `symlink`        |
+| `target` | text | canonical artifact/blob ID, except symlink target text |
+
+Entries are strictly sorted by bytewise lexicographic comparison of the NFC
+UTF-8 `name`. Duplicate names and duplicate path-v0 portable collision keys are
+invalid. `file` and `executable` target a blob; `directory` targets another
+`tree`; the authority resolves target project/realm/kind separately.
+
+A symlink target is NFC UTF-8 text of 1–4096 bytes. NUL, an initial `/` or `\`,
+and an ASCII drive prefix such as `C:` are forbidden. Full-tree validation and
+checkout must additionally reject lexical or filesystem resolution outside the
+checkout root.
+
+## `change`, schema 0
+
+A change points one realm-specific history node at a root tree. Its common
+envelope has `kind = "change"`, `schema = 0`, and 0–32 parent change IDs sorted
+by raw digest. The payload has exactly:
+
+| field     | type | rule                                              |
+| --------- | ---- | ------------------------------------------------- |
+| `root`    | text | canonical artifact ID of a `tree`                 |
+| `message` | text | NFC, 0–4096 UTF-8 bytes; same realm as the change |
+
+Graph validation resolves every parent and root, checks project/kind/realm flow,
+and verifies that `logical_clock` is greater than every same-actor parent clock.

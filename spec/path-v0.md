@@ -34,11 +34,15 @@ defined by the shared path corpus.
 
 ## Collision rule
 
-Within one tree, no two sibling names may have the same Unicode default
-case-folded NFC form. This intentionally rejects some repositories that a
-case-sensitive filesystem could store, in exchange for portable checkout.
-The original NFC spelling remains authoritative; clients MUST NOT silently
-rename it.
+Within one tree, no two sibling names may have the same v0 portable collision
+key. The key is the already-NFC name with ASCII `A`–`Z` replaced by `a`–`z`;
+all other Unicode scalar values remain unchanged. This algorithm is deliberately
+small and independent of a runtime's Unicode version. The original NFC spelling
+remains authoritative; clients MUST NOT silently rename it.
+
+Before checkout, a client MUST additionally probe or model the target
+filesystem's case/normalization behavior and refuse any collision it would
+create, including non-ASCII collisions not covered by the portable v0 key.
 
 ## Symlinks
 

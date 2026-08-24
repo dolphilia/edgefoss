@@ -2,9 +2,9 @@
 
 - Increment: I2a, partial executable specification
 - Base commit: `ef39b8de0dc59cf30e5425949fbd39885181e651`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `a97dfe428c0874dc3b9ac94a6ddf6cb17bd6c77a`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass
+- Result: pass; account owner confirmed GitHub Actions CI success
 
 ## Demonstrated slice
 
@@ -51,6 +51,6 @@ pnpm build
 
 ## Scope boundary
 
-I2a passed the full local repository check and is ready for commit and CI. I2
-continues with exact tree/change schemas, portable sibling-collision validation,
-cross-project graph validation, and semantic-root executability.
+I2a passed its local and CI checks. I2 continues with exact tree/change schemas,
+portable sibling-collision validation, cross-project graph validation, and
+semantic-root executability.

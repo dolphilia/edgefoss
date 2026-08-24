@@ -4,12 +4,40 @@ import {
   FormatError,
   type CborValue,
 } from "./cbor.js";
+import { validatePath } from "./path.js";
+import { parseRealm, type Realm } from "./realm.js";
 
 export interface ProjectGenesisInput {
   name: string;
   nonce: Uint8Array;
   actorKey: Uint8Array;
   createdAt: string;
+}
+
+export interface ArtifactMeta {
+  project: string;
+  realm: Realm;
+  parents: string[];
+  actorKey: Uint8Array;
+  logicalClock: bigint;
+  createdAt: string;
+}
+
+export type TreeEntryMode = "file" | "executable" | "directory" | "symlink";
+
+export interface TreeEntry {
+  name: string;
+  mode: TreeEntryMode;
+  target: string;
+}
+
+export interface TreeArtifactInput extends ArtifactMeta {
+  entries: TreeEntry[];
+}
+
+export interface ChangeArtifactInput extends ArtifactMeta {
+  root: string;
+  message: string;
 }
 
 const envelopeKeys = new Set([
@@ -25,6 +53,10 @@ const envelopeKeys = new Set([
   "payload",
 ]);
 const payloadKeys = new Set(["name", "nonce", "policy_version"]);
+const commonEnvelopeKeys = new Set([...envelopeKeys, "project"]);
+const treePayloadKeys = new Set(["entries"]);
+const treeEntryKeys = new Set(["name", "mode", "target"]);
+const changePayloadKeys = new Set(["root", "message"]);
 
 function schemaError(message: string): never {
   throw new FormatError("invalid_schema", message);
@@ -122,6 +154,157 @@ function validateInput(input: ProjectGenesisInput): void {
     schemaError("created_at must be a valid UTC RFC 3339 second");
 }
 
+function compareBytes(left: Uint8Array, right: Uint8Array): number {
+  const shared = Math.min(left.length, right.length);
+  for (let index = 0; index < shared; index += 1) {
+    const difference = left[index]! - right[index]!;
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+}
+
+function validateMeta(meta: ArtifactMeta, maxParents: number): void {
+  parseArtifactId(meta.project);
+  if (parseRealm(meta.realm) === undefined) schemaError("unknown realm");
+  asBytes(meta.actorKey, 32, "actor_key");
+  if (meta.logicalClock < 0n || meta.logicalClock > 0xffff_ffff_ffff_ffffn) {
+    schemaError("logical_clock must be uint64");
+  }
+  if (!validTimestamp(meta.createdAt)) schemaError("created_at is invalid");
+  if (meta.parents.length > maxParents) schemaError("too many parents");
+  const digests = meta.parents.map(parseArtifactId);
+  for (let index = 1; index < digests.length; index += 1) {
+    if (compareBytes(digests[index - 1]!, digests[index]!) >= 0) {
+      schemaError("parents must be strictly sorted by raw digest");
+    }
+  }
+}
+
+function commonEnvelope(
+  kind: "tree" | "change",
+  meta: ArtifactMeta,
+  payload: Map<string, CborValue>,
+): Map<string, CborValue> {
+  return new Map<string, CborValue>([
+    ["format", "edgefossil-artifact"],
+    ["version", 0n],
+    ["project", meta.project],
+    ["kind", kind],
+    ["schema", 0n],
+    ["realm", meta.realm],
+    ["parents", meta.parents],
+    ["actor_key", meta.actorKey],
+    ["logical_clock", meta.logicalClock],
+    ["created_at", meta.createdAt],
+    ["payload", payload],
+  ]);
+}
+
+function decodeMeta(
+  envelope: Map<string, CborValue>,
+  kind: "tree" | "change",
+  maxParents: number,
+): ArtifactMeta {
+  exactKeys(envelope, commonEnvelopeKeys, "artifact");
+  if (
+    envelope.get("format") !== "edgefossil-artifact" ||
+    envelope.get("version") !== 0n ||
+    envelope.get("kind") !== kind ||
+    envelope.get("schema") !== 0n
+  ) {
+    schemaError(`${kind} envelope constants are invalid`);
+  }
+  const project = envelope.get("project");
+  const realm = envelope.get("realm");
+  const parentsValue = envelope.get("parents");
+  const logicalClock = envelope.get("logical_clock");
+  const createdAt = envelope.get("created_at");
+  if (
+    typeof project !== "string" ||
+    typeof realm !== "string" ||
+    !Array.isArray(parentsValue) ||
+    parentsValue.some((parent) => typeof parent !== "string") ||
+    typeof logicalClock !== "bigint" ||
+    typeof createdAt !== "string"
+  ) {
+    schemaError(`${kind} envelope field types are invalid`);
+  }
+  const parsedRealm = parseRealm(realm);
+  if (parsedRealm === undefined) schemaError("unknown realm");
+  const meta = {
+    project,
+    realm: parsedRealm,
+    parents: parentsValue as string[],
+    actorKey: asBytes(envelope.get("actor_key"), 32, "actor_key"),
+    logicalClock,
+    createdAt,
+  };
+  validateMeta(meta, maxParents);
+  return meta;
+}
+
+function collisionKey(name: string): string {
+  return name.replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
+
+function validateSymlinkTarget(target: string): void {
+  const length = new TextEncoder().encode(target).length;
+  if (
+    length === 0 ||
+    length > 4096 ||
+    target.normalize("NFC") !== target ||
+    target.includes("\0") ||
+    target.startsWith("/") ||
+    target.startsWith("\\") ||
+    /^[A-Za-z]:/.test(target)
+  ) {
+    schemaError("symlink target is invalid");
+  }
+}
+
+function validateTreeEntries(
+  entries: TreeEntry[],
+  requireSorted: boolean,
+): TreeEntry[] {
+  if (entries.length > 65_535) schemaError("tree has too many entries");
+  const encoder = new TextEncoder();
+  const sorted = entries
+    .map((entry) => ({ ...entry }))
+    .sort((left, right) =>
+      compareBytes(encoder.encode(left.name), encoder.encode(right.name)),
+    );
+  const seenCollisionKeys = new Set<string>();
+  for (let index = 0; index < sorted.length; index += 1) {
+    const entry = sorted[index]!;
+    try {
+      validatePath(entry.name);
+    } catch {
+      schemaError("tree entry name is invalid");
+    }
+    if (entry.name.includes("/"))
+      schemaError("tree entry name must be one segment");
+    if (!["file", "executable", "directory", "symlink"].includes(entry.mode)) {
+      schemaError("tree entry mode is invalid");
+    }
+    if (entry.mode === "symlink") validateSymlinkTarget(entry.target);
+    else parseArtifactId(entry.target);
+    const key = collisionKey(entry.name);
+    if (seenCollisionKeys.has(key)) {
+      throw new FormatError("path_collision", "tree entry collision");
+    }
+    seenCollisionKeys.add(key);
+    if (
+      requireSorted &&
+      (entries[index]!.name !== entry.name ||
+        entries[index]!.mode !== entry.mode ||
+        entries[index]!.target !== entry.target)
+    ) {
+      schemaError("tree entries are not sorted by UTF-8 name");
+    }
+  }
+  return sorted;
+}
+
 export function encodeProjectGenesis(input: ProjectGenesisInput): Uint8Array {
   validateInput(input);
   const payload = new Map<string, CborValue>([
@@ -179,6 +362,95 @@ export function decodeProjectGenesis(bytes: Uint8Array): ProjectGenesisInput {
     createdAt,
   };
   validateInput(result);
+  return result;
+}
+
+export function encodeTree(input: TreeArtifactInput): Uint8Array {
+  validateMeta(input, 0);
+  const entries = validateTreeEntries(input.entries, false).map(
+    (entry) =>
+      new Map<string, CborValue>([
+        ["name", entry.name],
+        ["mode", entry.mode],
+        ["target", entry.target],
+      ]),
+  );
+  return encodeCanonical(
+    commonEnvelope("tree", input, new Map([["entries", entries]])),
+  );
+}
+
+export function decodeTree(bytes: Uint8Array): TreeArtifactInput {
+  const envelope = asMap(decodeCanonical(bytes), "artifact");
+  const meta = decodeMeta(envelope, "tree", 0);
+  const payload = asMap(
+    envelope.get("payload") ?? schemaError("payload is missing"),
+    "payload",
+  );
+  exactKeys(payload, treePayloadKeys, "tree payload");
+  const entriesValue = payload.get("entries");
+  if (!Array.isArray(entriesValue))
+    schemaError("tree entries must be an array");
+  const entries = entriesValue.map((value) => {
+    const entry = asMap(value, "tree entry");
+    exactKeys(entry, treeEntryKeys, "tree entry");
+    const name = entry.get("name");
+    const mode = entry.get("mode");
+    const target = entry.get("target");
+    if (
+      typeof name !== "string" ||
+      typeof mode !== "string" ||
+      typeof target !== "string"
+    ) {
+      schemaError("tree entry field types are invalid");
+    }
+    return { name, mode: mode as TreeEntryMode, target };
+  });
+  validateTreeEntries(entries, true);
+  return { ...meta, entries };
+}
+
+function validateChange(input: ChangeArtifactInput): void {
+  validateMeta(input, 32);
+  parseArtifactId(input.root);
+  const messageLength = new TextEncoder().encode(input.message).length;
+  if (
+    messageLength > 4096 ||
+    input.message.normalize("NFC") !== input.message
+  ) {
+    schemaError("change message must be NFC and at most 4096 UTF-8 bytes");
+  }
+}
+
+export function encodeChange(input: ChangeArtifactInput): Uint8Array {
+  validateChange(input);
+  return encodeCanonical(
+    commonEnvelope(
+      "change",
+      input,
+      new Map<string, CborValue>([
+        ["root", input.root],
+        ["message", input.message],
+      ]),
+    ),
+  );
+}
+
+export function decodeChange(bytes: Uint8Array): ChangeArtifactInput {
+  const envelope = asMap(decodeCanonical(bytes), "artifact");
+  const meta = decodeMeta(envelope, "change", 32);
+  const payload = asMap(
+    envelope.get("payload") ?? schemaError("payload is missing"),
+    "payload",
+  );
+  exactKeys(payload, changePayloadKeys, "change payload");
+  const root = payload.get("root");
+  const message = payload.get("message");
+  if (typeof root !== "string" || typeof message !== "string") {
+    schemaError("change payload field types are invalid");
+  }
+  const result = { ...meta, root, message };
+  validateChange(result);
   return result;
 }
 
