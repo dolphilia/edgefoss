@@ -1,0 +1,95 @@
+{
+  "profile": "edgefossil-semantic-root-v0",
+  "project": "sha256:78ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e",
+  "artifacts": [
+    {
+      "id": "sha256:78ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e",
+      "realm": "public"
+    },
+    {
+      "id": "sha256:82b53cad39e27537df70607d6be6b870affae453691eea93673ff02dae954f4d",
+      "realm": "public"
+    },
+    {
+      "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "realm": "members"
+    },
+    {
+      "id": "sha256:5539e9a3b15288c68fc792a15d443fe9ce3ed3056634839255b2d359573cd7ff",
+      "realm": "public"
+    },
+    {
+      "id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "realm": "local"
+    }
+  ],
+  "refs": [
+    {
+      "name": "heads/main",
+      "target": "sha256:82b53cad39e27537df70607d6be6b870affae453691eea93673ff02dae954f4d",
+      "realm": "public"
+    },
+    {
+      "name": "heads/main",
+      "target": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "realm": "members"
+    },
+    {
+      "name": "scratch/current",
+      "target": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "realm": "local"
+    }
+  ],
+  "expected": [
+    {
+      "realm": "public",
+      "artifact_set_root_hex": "f68d3fccbda52c6c773d5e9c502d6472a4167dbc8ed9c5c7222102df20c03d34",
+      "descriptor_cbor_hex": "a76472656673a16a68656164732f6d61696e582082b53cad39e27537df70607d6be6b870affae453691eea93673ff02dae954f4d657265616c6d667075626c696366666f726d6174781865646765666f7373696c2d73656d616e7469632d726f6f746770726f6a656374582078ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e6776657273696f6e006e706f6c6963795f76657273696f6e007161727469666163745f7365745f726f6f745820f68d3fccbda52c6c773d5e9c502d6472a4167dbc8ed9c5c7222102df20c03d34",
+      "semantic_root": "sha256:ca6263dfcbe8df9442012c75630304a3a553b46a7067f32d642d90854db88376"
+    },
+    {
+      "realm": "members",
+      "artifact_set_root_hex": "fb0f8816abf9aa7c7d79d72b53acc0b8cd289b0a7b5a13f8444965ceb2f5aedb",
+      "descriptor_cbor_hex": "a76472656673a16a68656164732f6d61696e5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa657265616c6d676d656d6265727366666f726d6174781865646765666f7373696c2d73656d616e7469632d726f6f746770726f6a656374582078ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e6776657273696f6e006e706f6c6963795f76657273696f6e007161727469666163745f7365745f726f6f745820fb0f8816abf9aa7c7d79d72b53acc0b8cd289b0a7b5a13f8444965ceb2f5aedb",
+      "semantic_root": "sha256:71732bc2e3a53c13431947bca732c83cf632084a30661a391258019824c4b73c"
+    },
+    {
+      "realm": "local",
+      "artifact_set_root_hex": "ba44d7c0b3d3dd4fb4a41e6f4299dfaa0e4cabd631e0ea5d7072c3a43391adfc",
+      "descriptor_cbor_hex": "a76472656673a16f736372617463682f63757272656e745820bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb657265616c6d656c6f63616c66666f726d6174781865646765666f7373696c2d73656d616e7469632d726f6f746770726f6a656374582078ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e6776657273696f6e006e706f6c6963795f76657273696f6e007161727469666163745f7365745f726f6f745820ba44d7c0b3d3dd4fb4a41e6f4299dfaa0e4cabd631e0ea5d7072c3a43391adfc",
+      "semantic_root": "sha256:17426edc19d57e10b36def725ed293446be8b57f15a6905ba20a1b850708e56a"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "duplicate-artifact",
+      "mutation": "duplicate_artifact",
+      "error": "invalid_schema"
+    },
+    {
+      "name": "duplicate-ref",
+      "mutation": "duplicate_ref",
+      "error": "invalid_schema"
+    },
+    {
+      "name": "missing-ref-target",
+      "mutation": "missing_ref_target",
+      "error": "unknown_required_semantics"
+    },
+    {
+      "name": "invalid-ref-name",
+      "mutation": "invalid_ref_name",
+      "error": "invalid_schema"
+    },
+    {
+      "name": "invalid-artifact-id",
+      "mutation": "invalid_artifact_id",
+      "error": "invalid_artifact_id"
+    },
+    {
+      "name": "invalid-project-id",
+      "mutation": "invalid_project_id",
+      "error": "invalid_artifact_id"
+    }
+  ]
+}

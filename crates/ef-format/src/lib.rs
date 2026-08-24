@@ -8,11 +8,15 @@ use unicode_normalization::UnicodeNormalization;
 mod graph;
 mod path;
 mod realm;
+mod semantic_root;
 mod signature;
 
 pub use graph::{GraphArtifactKind, GraphArtifactSummary, validate_change_graph};
 pub use path::{PathError, PathErrorCode, validate_path};
 pub use realm::{ParseRealmError, Realm, ReferenceClass, can_reference};
+pub use semantic_root::{
+    SemanticArtifact, SemanticRef, SemanticRootInput, SemanticRootResult, compute_semantic_root,
+};
 pub use signature::{
     SignatureRecord, artifact_signature_message, decode_signature_record, encode_signature_record,
     verify_artifact_signature,

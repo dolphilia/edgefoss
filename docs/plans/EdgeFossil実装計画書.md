@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1、I2a、I2bはcommit/CI済み。I2cの実装とlocal full check/buildも完了し、commit/CI確認待ちである。I2cではcross-project/realm graph解決、same-actor logical clock、detached Ed25519 signatureをRust/TypeScriptで実装した。残るG1 critical itemはsemantic root calculatorとpublic-members independence property、および第三者実装可能性reviewである。詳細は各increment evidenceと[`I2c graph/signature local evidence`](../evidence/i2c-graph-signature-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1、I2a、I2b、I2cはcommit/CI済み。I2dのrealm-isolated semantic root calculatorとpublic-members independence propertyはRust/TypeScript実装、local full check/buildまで完了し、commit/CI確認待ちである。残るG1 critical itemはI2dのCIと第三者実装可能性reviewである。詳細は各increment evidence、[`I2c graph/signature local evidence`](../evidence/i2c-graph-signature-local-2026-08-24.md)、[`I2d semantic-root local evidence`](../evidence/i2d-semantic-root-local-2026-08-24.md)を参照する。
 
 成果物:
 

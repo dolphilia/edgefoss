@@ -44,3 +44,10 @@ export {
   verifyArtifactSignature,
   type SignatureRecord,
 } from "./signature.js";
+export {
+  computeSemanticRoot,
+  type SemanticArtifact,
+  type SemanticRef,
+  type SemanticRootInput,
+  type SemanticRootResult,
+} from "./semantic-root.js";
