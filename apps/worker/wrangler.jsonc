@@ -20,18 +20,92 @@
   "vars": {
     "EDGEFOSS_ENV": "dev",
   },
+  "exports": {
+    "RepositoryDO": {
+      "type": "durable-object",
+      "state": "created",
+      "storage": "sqlite",
+    },
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REPOSITORY",
+        "class_name": "RepositoryDO",
+      },
+    ],
+  },
+  "r2_buckets": [
+    {
+      "binding": "PUBLIC_BLOBS",
+      "bucket_name": "edgefoss-dev-public-blobs",
+    },
+    {
+      "binding": "RESTRICTED_BLOBS",
+      "bucket_name": "edgefoss-dev-restricted-blobs",
+    },
+    {
+      "binding": "EXPORTS",
+      "bucket_name": "edgefoss-dev-exports",
+    },
+  ],
   "env": {
     "staging": {
       "name": "edgefoss-staging",
       "vars": {
         "EDGEFOSS_ENV": "staging",
       },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "REPOSITORY",
+            "class_name": "RepositoryDO",
+          },
+        ],
+      },
+      "r2_buckets": [
+        {
+          "binding": "PUBLIC_BLOBS",
+          "bucket_name": "edgefoss-staging-public-blobs",
+        },
+        {
+          "binding": "RESTRICTED_BLOBS",
+          "bucket_name": "edgefoss-staging-restricted-blobs",
+        },
+        {
+          "binding": "EXPORTS",
+          "bucket_name": "edgefoss-staging-exports",
+        },
+      ],
     },
     "production": {
       "name": "edgefoss-production",
+      "workers_dev": false,
       "vars": {
         "EDGEFOSS_ENV": "production",
       },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "REPOSITORY",
+            "class_name": "RepositoryDO",
+          },
+        ],
+      },
+      "r2_buckets": [
+        {
+          "binding": "PUBLIC_BLOBS",
+          "bucket_name": "edgefoss-production-public-blobs",
+        },
+        {
+          "binding": "RESTRICTED_BLOBS",
+          "bucket_name": "edgefoss-production-restricted-blobs",
+        },
+        {
+          "binding": "EXPORTS",
+          "bucket_name": "edgefoss-production-exports",
+        },
+      ],
     },
   },
 }

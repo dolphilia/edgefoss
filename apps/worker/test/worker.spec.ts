@@ -21,11 +21,58 @@ describe("EdgeFossil Worker", () => {
     expect(response.headers.get("content-type")).toBe(
       "application/json; charset=utf-8",
     );
-    await expect(response.json()).resolves.toEqual({
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.json();
+    expect(body).toEqual({
+      components: {
+        repository: {
+          schemaVersion: 1,
+          status: "ok",
+          storage: "sqlite",
+        },
+        r2: {
+          exports: "bound",
+          publicBlobs: "bound",
+          restrictedBlobs: "bound",
+        },
+      },
+      edition: "single",
       environment: "dev",
       service: "edgefoss",
       status: "ok",
     });
+    expect(JSON.stringify(body)).not.toContain("edgefoss-dev");
+  });
+
+  it("initializes one SQLite-backed repository authority idempotently", async () => {
+    const repository = env.REPOSITORY.getByName("edgefoss-single-project-v0", {
+      locationHint: "apac-ne",
+    });
+
+    await expect(repository.health()).resolves.toEqual({
+      schemaVersion: 1,
+      status: "ok",
+      storage: "sqlite",
+    });
+    await expect(repository.health()).resolves.toEqual({
+      schemaVersion: 1,
+      status: "ok",
+      storage: "sqlite",
+    });
+  });
+
+  it("supports a bodyless HEAD health probe", async () => {
+    const request = new IncomingRequest("https://edgefoss.test/health", {
+      method: "HEAD",
+    });
+    const context = createExecutionContext();
+
+    const response = await worker.fetch(request, env, context);
+    await waitOnExecutionContext(context);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toBe("");
   });
 
   it("returns a structured 404 for unknown paths", async () => {

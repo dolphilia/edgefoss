@@ -72,8 +72,9 @@ Queue IDs, credentials, or unrelated account resources.
 
 The first successful provision is still a billable Cloudflare mutation and must
 be initiated only after this implementation is committed and CI is green.
-Queue consumer policy, bindings, and the DO namespace are not active until the
-P4a Worker configuration is deployed.
+The DO namespace and R2 bindings are not active until the P4a Worker
+configuration is deployed. Queue consumer policy remains deliberately inactive
+until the P4d outbox event contract and idempotent consumer are implemented.
 
 ## Verification
 
@@ -85,6 +86,11 @@ P4a Worker configuration is deployed.
 - `pnpm check` and `pnpm build` cover the ordinary repository gates;
 - after commit/CI, the account owner runs `cloud:provision` followed by
   `cloud:verify`, and the non-secret result is captured as separate evidence.
+
+The account owner subsequently completed this step. A read-only rerun reported
+all five resources ready and private, no writes, and the DO still
+`pending_worker_deploy`; see the
+[`P4a evidence`](../evidence/p4a-stateful-foundation-local-2026-08-25.md).
 
 References:
 

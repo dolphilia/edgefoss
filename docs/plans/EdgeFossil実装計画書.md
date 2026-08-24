@@ -621,7 +621,7 @@ Exit gate G3:
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
 
-現在の判定（2026-08-25）: 4条件すべてのlocal/remote証跡が揃ったためG3はgoであり、P3 `single-static`を完了した。P4a0のresource manifestと非mutating `cloud:plan`もcommit/CI済みで、U2を通過した。次はapproval-gated provision/verify実装のcommit/CI確認後にstaging resourceをprovisionする。
+現在の判定（2026-08-25）: 4条件すべてのlocal/remote証跡が揃ったためG3はgoであり、P3 `single-static`を完了した。P4a0のresource manifest、approval-gated provision/verify、U2承認がcommit/CI済みである。stagingの3 R2 bucketとQueue/DLQは承認済みplanからprovisionされ、read-only verifyもreadyになった。次はP4a Worker実装をcommit/CIで確定してから、manual OAuth staging deployとstateful health smokeを行う。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -663,14 +663,20 @@ staging plan digestは
 であり、account ownerはcommit `23ff83b`のCI成功確認後、R2 subscription利用可、
 data residency要件なし、Automatic R2、DO jurisdictionなし、`apac-ne`、resource名、
 digestを承認したためU2は完了した。承認fileと一致しない限り停止する冪等な
-`cloud:provision`、read-only `cloud:verify`も実装し、live verifyで予定5 resourceが
-未作成であることを確認した。DOはP4a Worker deployまで
-`pending_worker_deploy`である。stateful cloud mutationはまだ開始しておらず、
-この実装のcommit/CI成功後にaccount ownerへstaging provisionを案内する。詳細は
+`cloud:provision`、read-only `cloud:verify`も実装した。そのcommit/CI成功後、account
+ownerが承認済みplanからstagingの3 R2 bucketとQueue/DLQをprovisionした。再実行は
+`actions: unchanged`で収束し、live verifyは5 resource ready、全R2 private、
+`readyForWorkerDeployment: true`を返した。DOはP4a Worker deployまで
+`pending_worker_deploy`である。P4aでは固定名のSingle Edition authority、宣言的SQLite
+`RepositoryDO`、stateful health、3 R2 bindingsをlocal実装し、Queue binding/consumerは
+event contractを実装するP4dまで有効化しない。この実装のcommit/CI成功後にだけ、
+account ownerへmanual staging deployを案内する。詳細は
 [`ADR 0024`](../adr/0024-reviewed-cloud-resource-manifest.md)と
 [`P4a0 evidence`](../evidence/p4a0-cloud-plan-local-2026-08-25.md)、
 [`ADR 0025`](../adr/0025-u2-gated-cloud-provisioning.md)、
-[`U2 evidence`](../evidence/u2-stateful-resource-approval-2026-08-25.md)を参照する。
+[`U2 evidence`](../evidence/u2-stateful-resource-approval-2026-08-25.md)、
+[`ADR 0026`](../adr/0026-minimal-single-project-stateful-topology.md)、
+[`P4a evidence`](../evidence/p4a-stateful-foundation-local-2026-08-25.md)を参照する。
 
 CI deploy checkpoint U3:
 
