@@ -2,12 +2,12 @@
 
 - Increment: I4d, P3 complete-bundle regeneration and served-byte audit
 - Base commit: `77558c855ed4097c5ba46fd5f311cc34c6589476`
-- Source state: local working tree; commit and CI confirmation pending
+- Source state: committed as `0f3cf4b8dcbc7b108b90b6f2ec6654487aad3d1e`;
+  GitHub Actions success confirmed by the repository owner
 - Toolchain: Wrangler `4.125.0`, Node.js `24.19.0`, Rust `1.94.1`
 - Cloudflare state: no login, remote request, Worker, DO, R2, or other resource
 - Result: focused and full workspace verification, CLI regeneration,
-  assets-only served-byte audit, and build pass; commit and CI confirmation
-  pending
+  assets-only served-byte audit, build, commit, and CI pass
 
 ## Complete-bundle regeneration audit
 

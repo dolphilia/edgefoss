@@ -589,16 +589,15 @@ Exit gate G2:
 
 ### P3: `single-static`（2–3 person-weeks）
 
-実行状況（2026-08-25）: I4a〜I4cはcommit/CI済み。deep verify済みpublic bundleだけを受け取る決定的renderer、`ef static-build`、Worker script/bindingを持たないassets-only Wrangler profile、generated 404、3環境dry-run、実HTTP local smoke、bounded content chunk、recent timelineが揃った。I4dではcomplete public bundleからのsiteと、空repositoryへimportして再exportしたbundleからのsiteについて、bundle全byte・semantic root・site全byteの一致をCLI境界で確認した。さらにgenerated deployable asset全件とWrangler local HTTP response bodyのbyte一致を確認した（commit/CI確認待ち）。これでG3のlocal条件はすべてgreenであり、I4dのcommit/CI成功後はremote stagingが直後になるためU1を開始する。詳細は[`ADR 0021`](../adr/0021-deterministic-public-static-projection.md)、[`I4a evidence`](../evidence/i4a-public-static-projection-local-2026-08-25.md)、[`ADR 0022`](../adr/0022-assets-only-static-deployment-profile.md)、[`I4b evidence`](../evidence/i4b-assets-only-profile-local-2026-08-25.md)、[`ADR 0023`](../adr/0023-bounded-static-content-chunks.md)、[`I4c evidence`](../evidence/i4c-bounded-static-content-local-2026-08-25.md)、[`I4d evidence`](../evidence/i4d-static-regeneration-audit-local-2026-08-25.md)を参照する。
+実行状況（2026-08-25）: I4a〜I4dはcommit/CI済み。deep verify済みpublic bundleだけを受け取る決定的renderer、`ef static-build`、Worker script/bindingを持たないassets-only Wrangler profile、generated 404、3環境dry-run、実HTTP local smoke、bounded content chunk、recent timeline、complete bundleのrestore/re-export/site全byte一致、全deployable assetのHTTP response byte一致が揃った。U1はaccount ownerによる単一account選択、2FA/backup codes、intended accountへのproject-local Wrangler OAuth、macOS Keychain-backed encrypted storage、`workers.dev` subdomain設定をもって完了した。I4eではsynthetic public fixtureを`edgefoss-static-staging`へassets-only deployし、remoteの全6 deployable fileと生成byteの一致、security headers、404 body、`_headers`非公開、semantic root一致を確認した（commit/CI確認待ち）。production、R2、DO、Queue、custom domain、API tokenは対象外のままである。詳細は[`ADR 0021`](../adr/0021-deterministic-public-static-projection.md)、[`I4a evidence`](../evidence/i4a-public-static-projection-local-2026-08-25.md)、[`ADR 0022`](../adr/0022-assets-only-static-deployment-profile.md)、[`I4b evidence`](../evidence/i4b-assets-only-profile-local-2026-08-25.md)、[`ADR 0023`](../adr/0023-bounded-static-content-chunks.md)、[`I4c evidence`](../evidence/i4c-bounded-static-content-local-2026-08-25.md)、[`I4d evidence`](../evidence/i4d-static-regeneration-audit-local-2026-08-25.md)、[`U1 checkpoint`](../evidence/u1-cloudflare-access-checkpoint-2026-08-25.md)、[`I4e evidence`](../evidence/i4e-assets-only-remote-staging-2026-08-25.md)を参照する。
 
 remote deploy開始checkpoint U1:
 
-1. local static buildがgreenになってから、account ownerへCloudflare accountの選択と2FA/recovery codesの保存を案内する。
+1. local static buildがgreenになってから、account ownerへCloudflare accountの選択と2FA/backup codesの保存を案内する。
 2. P0で追加したproject-local Wranglerを使い、次を順に実行してもらう。
 
    ```bash
    cd /Users/dolphilia/github/edgefoss
-   pnpm install
    pnpm exec wrangler login --use-keyring
    pnpm exec wrangler whoami
    ```
@@ -621,6 +620,8 @@ Exit gate G3:
 - static outputがpublic realmだけから生成される。
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
+
+現在の判定（2026-08-25）: 4条件すべてのlocal/remote証跡が揃ったためG3はgoであり、P3 `single-static`を完了する。次はP4a0としてresource manifestと非mutating `cloud:plan`をlocal実装し、その出力をreview可能にしてからU2を開始する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 

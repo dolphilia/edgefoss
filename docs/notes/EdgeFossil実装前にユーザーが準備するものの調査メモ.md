@@ -205,8 +205,7 @@ cargo run -p ef-cli --bin ef -- checkpoint \
 選択条件:
 
 - 自分がowner/Super Administratorである。
-- R2 subscriptionのbillingを自分で管理できる。
-- 将来custom domainを使う場合、そのzoneを同じaccountへ追加できる。
+- `Workers & Pages`の設定とstaging deployを自分で管理できる。
 
 複数のCloudflare accountがある場合、EdgeFossilに使う一つを決める。stagingとproductionのためにaccountを二つ作る必要はない。resource名とWrangler environmentで分離する。
 
@@ -218,15 +217,15 @@ EdgeFossil accountはsource、restricted data、deployment secretを管理する
 2. 右上のuser menuから `My Profile` を開く。
 3. `Authentication` を開く。
 4. `Two-Factor Authentication` の `Set up` を選ぶ。
-5. security keyまたはTOTP authenticatorを登録する。
+5. security keyまたはTOTP authenticatorを少なくとも一つ登録する。
 6. passwordと認証codeで設定を確定する。
-7. 表示されたbackup/recovery codesをdownloadまたはcopyする。
-8. recovery codesをpassword manager等、Cloudflare loginとは別の安全な場所へ保存する。
+7. 表示されたbackup codesをdownloadまたはcopyする。
+8. backup codesをpassword manager等、Cloudflare loginとは別の安全な場所へ保存する。
 
 確認:
 
 - 一度logoutし、password + 2FAでloginできる。
-- recovery codesがrepository、Downloads folder、plain text noteに残っていない。
+- backup codesがrepository、Downloads folder、plain text noteに残っていない。
 
 参考:
 
@@ -259,11 +258,10 @@ Account IDはpasswordではないが、public issueやsample configへ不用意�
 
 この作業はP3/P4で最初のremote deployを行う時に実施する。今のglobal Wranglerではなく、P0でrepositoryへ追加されるproject-local Wranglerを使う。
 
-P0完了後の想定手順:
+P0完了後の想定手順（依存関係が導入済みなら`pnpm install`は不要）:
 
 ```bash
 cd /Users/dolphilia/github/edgefoss
-pnpm install
 pnpm exec wrangler --version
 pnpm exec wrangler login --use-keyring
 pnpm exec wrangler whoami
@@ -661,11 +659,14 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [ ] Cloudflare accountを既に持っているか確認する。なければ作成する。
 - [ ] Cloudflare accountで2FAを有効にし、recovery codesを安全に保存する。
 
-### P3/P4直前に行う
+### P3 remote deploy直前に行う
 
 - [ ] EdgeFossilに使うCloudflare accountを一つ決める。
 - [ ] project-local Wranglerで`login --use-keyring`し、`whoami`を確認する。
 - [ ] `workers.dev` account subdomainを設定する。
+
+### P4 stateful resource作成直前に行う
+
 - [ ] R2 subscription checkoutを完了する。
 - [ ] data residency要件の有無を回答する。なければAutomaticを選ぶ。
 - [ ] `cloud:plan`が示すstaging resource名とjurisdictionをreviewする。
