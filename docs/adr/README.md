@@ -25,5 +25,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0019](0019-external-process-kill-sqlite-durability.md)    | Test SQLite recovery after external process kill    | Accepted for local alpha         |
 | [0020](0020-reproducible-local-scale-baselines.md)         | Separate constrained fixtures from timed commands   | Accepted for local alpha         |
 | [0021](0021-deterministic-public-static-projection.md)     | Project public bundles into paged static sites      | Accepted for single-static       |
+| [0022](0022-assets-only-static-deployment-profile.md)      | Keep static deployment scriptless and explicit      | Accepted for single-static       |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

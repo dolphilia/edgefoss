@@ -159,6 +159,10 @@ fn project_site(
         )
         .into_bytes(),
     );
+    files.insert(
+        "404.html".into(),
+        render_not_found(&genesis.name).into_bytes(),
+    );
     for (index, chunk) in history.chunks(PAGE_SIZE).enumerate() {
         files.insert(
             history_pages[index].clone(),
@@ -376,6 +380,15 @@ fn render_index(
     )
 }
 
+fn render_not_found(name: &str) -> String {
+    format!(
+        "{}<main><p class=\"eyebrow\">404 · Not found</p><h1>{}</h1><p>This public snapshot does not contain the requested page.</p><a href=\"/\">Return to the project</a></main>{}",
+        page_head(name, "/assets/site.css"),
+        escape_html(name),
+        PAGE_FOOT
+    )
+}
+
 fn render_history_page(
     name: &str,
     entries: &[(String, &ChangeArtifact)],
@@ -577,6 +590,7 @@ mod tests {
         let second = build_public_site(&public.manifest_bytes, &public.objects).unwrap();
         assert_eq!(first, second);
         assert!(first.files.contains_key("files/page-0003.html"));
+        assert!(first.files.contains_key("404.html"));
         assert!(!first.files.keys().any(|path| path.starts_with("blobs/")));
         let joined = first
             .files

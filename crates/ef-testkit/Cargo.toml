@@ -15,6 +15,7 @@ path = "src/main.rs"
 edgefoss-core = { path = "../edgefoss-core" }
 ed25519-dalek = "2.2"
 ef-format = { path = "../ef-format" }
+ef-static-site = { path = "../ef-static-site" }
 ef-store-sqlite = { path = "../ef-store-sqlite" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

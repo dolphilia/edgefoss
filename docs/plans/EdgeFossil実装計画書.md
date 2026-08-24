@@ -589,7 +589,7 @@ Exit gate G2:
 
 ### P3: `single-static`（2–3 person-weeks）
 
-実行状況（2026-08-25）: I4aで、deep verify済みpublic bundleだけを受け取る決定的rendererと`ef static-build`を実装した。JavaScript/Worker/DOなしのindex、history、current files、共有CSS、site manifestを生成し、100 records/page、restricted marker不在、corrupt/non-public拒否、同一bundleからbyte-identical再生成をlocal testで確認した（commit/CI確認待ち）。次はassets-only Wrangler profileとlocal HTTP smokeを追加し、file contentを一blob一assetにせず表示するbounded chunk設計を決める。U1はまだ開始しない。詳細は[`ADR 0021`](../adr/0021-deterministic-public-static-projection.md)と[`I4a evidence`](../evidence/i4a-public-static-projection-local-2026-08-25.md)を参照する。
+実行状況（2026-08-25）: I4aはcommit/CI済み。I4aでdeep verify済みpublic bundleだけを受け取る決定的rendererと`ef static-build`を実装した。I4bではWorker script/bindingを持たないassets-only Wrangler profile、generated 404、root/staging/production dry-run、実HTTP local smokeを追加した（commit/CI確認待ち）。同じproduction rendererから生成した一時siteについて200/404、security headers、`_headers`非公開、restricted marker不在、served semantic root一致を確認している。次はfile contentを一blob一assetにせず表示するbounded chunkとtimeline presentationを実装する。U1はremote deployが直後になるまで開始しない。詳細は[`ADR 0021`](../adr/0021-deterministic-public-static-projection.md)、[`I4a evidence`](../evidence/i4a-public-static-projection-local-2026-08-25.md)、[`ADR 0022`](../adr/0022-assets-only-static-deployment-profile.md)、[`I4b evidence`](../evidence/i4b-assets-only-profile-local-2026-08-25.md)を参照する。
 
 remote deploy開始checkpoint U1:
 

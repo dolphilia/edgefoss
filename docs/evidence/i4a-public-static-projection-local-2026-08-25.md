@@ -2,10 +2,11 @@
 
 - Increment: I4a, first P3 `single-static` local slice
 - Base commit: `0da98c81808b1362de0f9b4c67e5843055a35c90`
-- Source state: local working tree; commit and CI confirmation pending
+- Source state: committed as `d948a1142a4be6e9f9ddcd01ef2a4b43ef176e01`;
+  GitHub Actions success confirmed by the repository owner
 - Environment: local Rust `1.94.1`; no Cloudflare account or network resource
-- Result: focused renderer/CLI tests, full workspace verification, and build
-  pass; commit and CI confirmation pending
+- Result: focused renderer/CLI tests, full workspace verification, build,
+  commit, and CI pass
 
 ## Demonstrated slice
 

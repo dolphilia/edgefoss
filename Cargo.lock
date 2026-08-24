@@ -195,6 +195,7 @@ dependencies = [
  "ed25519-dalek",
  "edgefoss-core",
  "ef-format",
+ "ef-static-site",
  "ef-store-sqlite",
  "rusqlite",
  "serde",

@@ -1,0 +1,11 @@
+{
+  "name": "@edgefoss/static-site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Assets-only deployment profile for a generated EdgeFossil public site",
+  "scripts": {
+    "dev": "wrangler dev --env=\"\"",
+    "deploy:staging": "wrangler deploy --env=staging --strict",
+    "deploy:production": "wrangler deploy --env=production --strict"
+  }
+}

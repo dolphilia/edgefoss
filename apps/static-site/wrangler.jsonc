@@ -1,0 +1,35 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "edgefoss-static",
+  "compatibility_date": "2026-08-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+  },
+  "env": {
+    "staging": {
+      "name": "edgefoss-static-staging",
+      "workers_dev": true,
+      "preview_urls": false,
+      "assets": {
+        "directory": "./dist",
+        "html_handling": "auto-trailing-slash",
+        "not_found_handling": "404-page",
+      },
+    },
+    "production": {
+      "name": "edgefoss-static-production",
+      "workers_dev": false,
+      "preview_urls": false,
+      "assets": {
+        "directory": "./dist",
+        "html_handling": "auto-trailing-slash",
+        "not_found_handling": "404-page",
+      },
+    },
+  },
+}

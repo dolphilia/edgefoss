@@ -21,6 +21,8 @@ importers:
         specifier: ^4.125.0
         version: 4.125.0
 
+  apps/static-site: {}
+
   apps/worker:
     devDependencies:
       '@cloudflare/vitest-plugin':

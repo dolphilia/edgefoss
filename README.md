@@ -112,6 +112,21 @@ paged; raw blobs are deliberately not emitted as one asset per object. The
 output works without JavaScript, a Worker script, or Cloudflare. Content hunks,
 file-content viewing, and historical-change diff are not implemented yet.
 
+The assets-only Cloudflare profile is separate from the dynamic Worker. To
+preview an intentionally generated site locally, choose a non-existing ignored
+output directory and start Wrangler without an environment:
+
+```bash
+cargo run -p ef-cli --bin ef -- static-build \
+  /safe/export/path/public.edge \
+  --output apps/static-site/dist
+pnpm --filter @edgefoss/static-site dev
+```
+
+This local preview needs no Cloudflare login. Staging and production deployment
+commands remain explicit and must not be run before the corresponding user
+checkpoint in the implementation plan.
+
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.
 
