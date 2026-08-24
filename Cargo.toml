@@ -3,6 +3,7 @@ members = [
   "crates/edgefoss-core",
   "crates/ef-cli",
   "crates/ef-format",
+  "crates/ef-static-site",
   "crates/ef-store-sqlite",
   "crates/ef-testkit",
 ]

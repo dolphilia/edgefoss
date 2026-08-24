@@ -2,8 +2,9 @@
 
 EdgeFossil is an experimental, portable, realm-aware source control system designed to run locally and on Cloudflare Workers.
 
-The repository is in P2 local alpha development. Artifact, bundle, database, and
-CLI formats are experimental and must not yet be used for irreplaceable data.
+The repository is in P3 `single-static` development after completing the P2
+local-alpha gate. Artifact, bundle, database, site, and CLI formats are
+experimental and must not yet be used for irreplaceable data.
 
 ## Prerequisites
 
@@ -64,6 +65,9 @@ cargo run -p ef-cli --bin ef -- history --path /path/to/project \
 cargo run -p ef-cli --bin ef -- export --path /path/to/project \
   --realm public --output /safe/export/path/public.edge
 cargo run -p ef-cli --bin ef -- verify /safe/export/path/public.edge
+cargo run -p ef-cli --bin ef -- static-build \
+  /safe/export/path/public.edge \
+  --output /safe/publish/path/public-site
 cargo run -p ef-cli --bin ef -- export --path /path/to/project \
   --realm members --base public=/safe/export/path/public.edge \
   --output /safe/export/path/members.edge
@@ -102,7 +106,11 @@ content. A local bundle is an explicit device-backup artifact and is never
 included implicitly in project/member export. `import` restores accepted
 portable state into an empty repository in public→members→local order. It does
 not restore signing secrets, tracking rules, or unsigned working snapshots.
-Content hunks and historical-change diff are not implemented yet.
+`static-build` deeply verifies exactly one public bundle and atomically creates
+a deterministic read-only HTML site. History and current-file metadata are
+paged; raw blobs are deliberately not emitted as one asset per object. The
+output works without JavaScript, a Worker script, or Cloudflare. Content hunks,
+file-content viewing, and historical-change diff are not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.

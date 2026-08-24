@@ -19,6 +19,7 @@ use ef_format::{
     artifact_id, artifact_signature_message, decode_bundle_manifest, encode_change,
     encode_project_genesis, validate_path,
 };
+use ef_static_site::build_public_site;
 use ef_store_sqlite::{
     DiffKind, LocalRepository, TrackingMode, TrackingRule, TrackingScope, verify_portable_bundle,
 };
@@ -43,6 +44,7 @@ Usage:
   ef export --realm <public|members|local> --output <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]... [--path <DIRECTORY>]
   ef verify <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]...
   ef import <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]... [--path <DIRECTORY>]
+  ef static-build <PUBLIC_BUNDLE_DIRECTORY> --output <SITE_DIRECTORY>
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
@@ -93,6 +95,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
         Some("export") => run_export(&parse_export(arguments)?),
         Some("verify") => run_verify(&parse_verify(arguments)?),
         Some("import") => run_import(&parse_import(arguments)?),
+        Some("static-build") => run_static_build(&parse_static_build(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -170,6 +173,11 @@ struct ImportOptions {
     path: PathBuf,
     bundle: PathBuf,
     bases: Vec<BundleBaseOption>,
+}
+
+struct StaticBuildOptions {
+    bundle: PathBuf,
+    output: PathBuf,
 }
 
 struct BundleBaseOption {
@@ -518,6 +526,37 @@ fn parse_import(arguments: impl Iterator<Item = OsString>) -> Result<ImportOptio
         path: path.unwrap_or_else(|| PathBuf::from(".")),
         bundle: bundle.ok_or_else(|| CliError::new("missing required BUNDLE_DIRECTORY"))?,
         bases,
+    })
+}
+
+fn parse_static_build(
+    arguments: impl Iterator<Item = OsString>,
+) -> Result<StaticBuildOptions, CliError> {
+    let mut bundle = None;
+    let mut output = None;
+    let mut arguments = arguments.peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str() {
+            Some("--output") => set_once(
+                &mut output,
+                PathBuf::from(parse_value(&mut arguments, "--output")?),
+                "--output",
+            )?,
+            Some(value) if value.starts_with('-') => {
+                return Err(CliError::new(format!(
+                    "unknown static-build option `{value}`"
+                )));
+            }
+            _ => set_once(
+                &mut bundle,
+                PathBuf::from(argument),
+                "PUBLIC_BUNDLE_DIRECTORY",
+            )?,
+        }
+    }
+    Ok(StaticBuildOptions {
+        bundle: bundle.ok_or_else(|| CliError::new("missing required PUBLIC_BUNDLE_DIRECTORY"))?,
+        output: output.ok_or_else(|| CliError::new("missing required option --output"))?,
     })
 }
 
@@ -970,6 +1009,28 @@ fn run_import(options: &ImportOptions) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_static_build(options: &StaticBuildOptions) -> Result<(), CliError> {
+    let bundle_root = canonical_bundle_directory(&options.bundle)?;
+    let (manifest_bytes, objects) = read_bundle_directory(&bundle_root)?;
+    let site = build_public_site(&manifest_bytes, &objects)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    let output = canonical_new_directory_path(&options.output)?;
+    reject_symlink_if_present(&output, "static site output")?;
+    if output.exists() {
+        return Err(CliError::new(format!(
+            "static site output already exists: {}",
+            output.display()
+        )));
+    }
+    write_static_site_atomically(&output, &site.files)?;
+    println!("site: {}", output.display());
+    println!("project: {}", site.project);
+    println!("realm: public");
+    println!("semantic-root: {}", site.semantic_root);
+    println!("assets: {}", site.files.len());
+    Ok(())
+}
+
 fn cleanup_failed_import(
     metadata_path: &Path,
     database_path: &Path,
@@ -1061,7 +1122,7 @@ fn canonical_new_directory_path(path: &Path) -> Result<PathBuf, CliError> {
     let name = path
         .file_name()
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| CliError::new("--output must name a bundle directory"))?;
+        .ok_or_else(|| CliError::new("--output must name a directory"))?;
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1239,6 +1300,76 @@ fn write_bundle_atomically(
         let _ = fs::remove_dir_all(&temporary);
     }
     result
+}
+
+fn write_static_site_atomically(
+    output: &Path,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), CliError> {
+    let parent = output
+        .parent()
+        .ok_or_else(|| CliError::new("invalid static site output"))?;
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| CliError::new(format!("OS random source failed: {error}")))?;
+    let mut suffix = String::with_capacity(nonce.len() * 2);
+    for byte in nonce {
+        let _ = write!(suffix, "{byte:02x}");
+    }
+    let temporary = parent.join(format!(".edgefoss-static-{suffix}.tmp"));
+    fs::create_dir(&temporary).map_err(|error| {
+        CliError::new(format!("cannot create {}: {error}", temporary.display()))
+    })?;
+    let result = (|| -> Result<(), CliError> {
+        for (relative, body) in files {
+            let relative = Path::new(relative);
+            if relative.is_absolute()
+                || relative.components().any(|component| {
+                    !matches!(
+                        component,
+                        std::path::Component::Normal(_) | std::path::Component::CurDir
+                    )
+                })
+            {
+                return Err(CliError::new("static site contains an unsafe output path"));
+            }
+            let path = temporary.join(relative);
+            if let Some(directory) = path.parent() {
+                fs::create_dir_all(directory).map_err(|error| {
+                    CliError::new(format!("cannot create static site directory: {error}"))
+                })?;
+            }
+            write_new_static_file(&path, body)?;
+        }
+        if output.exists() {
+            return Err(CliError::new(format!(
+                "static site output already exists: {}",
+                output.display()
+            )));
+        }
+        fs::rename(&temporary, output)
+            .map_err(|error| CliError::new(format!("cannot publish {}: {error}", output.display())))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&temporary);
+    }
+    result
+}
+
+fn write_new_static_file(path: &Path, body: &[u8]) -> Result<(), CliError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o644);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| CliError::new(format!("cannot create {}: {error}", path.display())))?;
+    file.write_all(body)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| CliError::new(format!("cannot write {}: {error}", path.display())))
 }
 
 fn write_new_bundle_file(path: &Path, body: &[u8]) -> Result<(), CliError> {

@@ -149,6 +149,7 @@ dependencies = [
  "ed25519-dalek",
  "edgefoss-core",
  "ef-format",
+ "ef-static-site",
  "ef-store-sqlite",
  "getrandom 0.4.3",
  "zeroize",
@@ -163,6 +164,18 @@ dependencies = [
  "serde_json",
  "sha2",
  "unicode-normalization",
+]
+
+[[package]]
+name = "ef-static-site"
+version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
+ "edgefoss-core",
+ "ef-format",
+ "ef-store-sqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

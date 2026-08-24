@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-25）: I1–I2f、I3a–I3jはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathではSQLite/CLIから3 realmの合成offline export/verify/import、process-kill recoveryまで確立した。I3kで10,000 filesと102,105 artifactsのrelease baselineを取得し、G2の最後の条件をlocal検証済みである（commit/CI確認待ち）。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)、[`I3f read-model evidence`](../evidence/i3f-realm-read-model-local-2026-08-24.md)、[`I3g public bundle evidence`](../evidence/i3g-public-bundle-local-2026-08-24.md)、[`I3h composed bundle evidence`](../evidence/i3h-composed-bundle-local-2026-08-24.md)、[`I3i transactional import evidence`](../evidence/i3i-transactional-import-local-2026-08-24.md)、[`I3j process-kill evidence`](../evidence/i3j-process-kill-local-2026-08-25.md)、[`I3k scale evidence`](../evidence/i3k-local-scale-baseline-2026-08-25.md)を参照する。
+実行状況（2026-08-25）: I1–I2f、I3a–I3kはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathではSQLite/CLIから3 realmの合成offline export/verify/import、process-kill recoveryまで確立した。I3kで10,000 filesと102,105 artifactsのrelease baselineを取得し、G2はgoとなった。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)、[`I3f read-model evidence`](../evidence/i3f-realm-read-model-local-2026-08-24.md)、[`I3g public bundle evidence`](../evidence/i3g-public-bundle-local-2026-08-24.md)、[`I3h composed bundle evidence`](../evidence/i3h-composed-bundle-local-2026-08-24.md)、[`I3i transactional import evidence`](../evidence/i3i-transactional-import-local-2026-08-24.md)、[`I3j process-kill evidence`](../evidence/i3j-process-kill-local-2026-08-25.md)、[`I3k scale evidence`](../evidence/i3k-local-scale-baseline-2026-08-25.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-25）: I3a–I3jはcommit/CI済み。I3d–I3iでrealm別snapshot/checkpoint/read、3 realm合成bundle export/deep verify/transactional importを実装し、I3jの18 logical write pointで別processを実際に停止してSQLite integrityとtransaction原子性を確認した。I3kではformat上限内の3 realm accepted chainとdeep working treeを合成し、10,000 filesと102,105 SQLite artifactsのrelease command baselineを取得した。local exportの178–209秒が主要な性能課題であることもraw dataとして記録した。
+実行状況（2026-08-25）: I3a–I3kはcommit/CI済み。I3d–I3iでrealm別snapshot/checkpoint/read、3 realm合成bundle export/deep verify/transactional importを実装し、I3jの18 logical write pointで別processを実際に停止してSQLite integrityとtransaction原子性を確認した。I3kではformat上限内の3 realm accepted chainとdeep working treeを合成し、10,000 filesと102,105 SQLite artifactsのrelease command baselineを取得した。local exportの178–209秒が主要な性能課題であることもraw dataとして記録した。
 
 成果物:
 
@@ -585,9 +585,11 @@ Exit gate G2:
 - untracked/local objectがproject exportへ入らない。
 - 1万file、10万artifactのlocal fixtureで日常commandのbaselineを取得する。
 
-現在の判定（2026-08-25）: 4条件すべてにlocal証跡が揃ったためG2はgoである（I3kのcommit/CI確認待ち）。次はP3 `single-static`のlocal buildを先に進め、remote deployの直前にU1のuser作業を案内する。
+現在の判定（2026-08-25）: 4条件すべてのlocal証跡とI3kのcommit/CI確認が揃ったためG2はgoである。P3 `single-static`のlocal buildを先に進め、remote deployの直前にU1のuser作業を案内する。
 
 ### P3: `single-static`（2–3 person-weeks）
+
+実行状況（2026-08-25）: I4aで、deep verify済みpublic bundleだけを受け取る決定的rendererと`ef static-build`を実装した。JavaScript/Worker/DOなしのindex、history、current files、共有CSS、site manifestを生成し、100 records/page、restricted marker不在、corrupt/non-public拒否、同一bundleからbyte-identical再生成をlocal testで確認した（commit/CI確認待ち）。次はassets-only Wrangler profileとlocal HTTP smokeを追加し、file contentを一blob一assetにせず表示するbounded chunk設計を決める。U1はまだ開始しない。詳細は[`ADR 0021`](../adr/0021-deterministic-public-static-projection.md)と[`I4a evidence`](../evidence/i4a-public-static-projection-local-2026-08-25.md)を参照する。
 
 remote deploy開始checkpoint U1:
 

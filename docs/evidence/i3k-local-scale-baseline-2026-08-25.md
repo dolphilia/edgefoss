@@ -2,12 +2,12 @@
 
 - Increment: I3k, reproducible G2 file/artifact baseline
 - Base commit: `e437aa17905ca92331cb6ef0cb1e1400c2127d7b`
-- Source state: local working tree; commit and CI confirmation pending
+- Source state: committed as `0da98c81808b1362de0f9b4c67e5843055a35c90`;
+  GitHub Actions success confirmed by the repository owner
 - Environment: macOS Darwin 24.6.0 on arm64, Rust `1.94.1`, release binaries
 - Measured source: base commit `e437aa17905ca92331cb6ef0cb1e1400c2127d7b`
   plus the recorded I3k working-tree implementation (`source_dirty: true`)
-- Result: full G2 profile and workspace verification pass; commit and CI
-  confirmation pending
+- Result: full G2 profile, workspace verification, commit, and CI pass
 - Raw observations:
   [`i3k-local-baseline-g2-2026-08-25.json`](data/i3k-local-baseline-g2-2026-08-25.json)
 
@@ -76,8 +76,7 @@ report. The benchmark never uses or creates Cloudflare resources.
 
 All G2 conditions now have local evidence: byte-identical empty restore,
 realm/untracked exclusion, external process-kill recovery, and the required
-file/artifact baseline. G2 is `go`, subject to commit and CI confirmation for
-this increment.
+file/artifact baseline. G2 is `go`.
 
 The observations identify export as the dominant performance concern. They do
 not establish a production SLO and do not cover Durable Objects, R2, network,

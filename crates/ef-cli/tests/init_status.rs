@@ -78,6 +78,34 @@ fn bundle_contents(root: &Path) -> BTreeMap<String, Vec<u8>> {
     contents
 }
 
+fn directory_contents(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn visit(root: &Path, current: &Path, contents: &mut BTreeMap<String, Vec<u8>>) {
+        let mut entries = fs::read_dir(current)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            if entry.file_type().unwrap().is_dir() {
+                visit(root, &entry.path(), contents);
+            } else {
+                contents.insert(
+                    entry
+                        .path()
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    fs::read(entry.path()).unwrap(),
+                );
+            }
+        }
+    }
+    let mut contents = BTreeMap::new();
+    visit(root, root, &mut contents);
+    contents
+}
+
 #[test]
 fn initializes_repository_and_reports_status() {
     let directory = TestDirectory::new();
@@ -734,6 +762,59 @@ fn exports_and_offline_verifies_a_public_bundle_without_restricted_leakage() {
     assert!(!members.status.success());
     assert!(stderr(&members).contains("requires --base public=BUNDLE_DIRECTORY"));
     assert!(!members_bundle.exists());
+}
+
+#[test]
+fn builds_a_deterministic_static_site_from_only_the_public_bundle() {
+    let fixture = CheckpointFixture::new();
+    let output_directory = TestDirectory::new();
+    let bundle = output_directory.as_ref().join("public.edge");
+    let first = output_directory.as_ref().join("site-first");
+    let second = output_directory.as_ref().join("site-second");
+    let exported = ef(&[
+        "export",
+        "--path",
+        fixture.root(),
+        "--realm",
+        "public",
+        "--output",
+        bundle.to_str().unwrap(),
+    ]);
+    assert!(exported.status.success(), "{}", stderr(&exported));
+
+    for site in [&first, &second] {
+        let built = ef(&[
+            "static-build",
+            bundle.to_str().unwrap(),
+            "--output",
+            site.to_str().unwrap(),
+        ]);
+        assert!(built.status.success(), "{}", stderr(&built));
+        assert!(stdout(&built).contains("realm: public\n"));
+    }
+    assert_eq!(directory_contents(&first), directory_contents(&second));
+    assert!(first.join("index.html").is_file());
+    assert!(first.join("history/page-0001.html").is_file());
+    assert!(first.join("files/page-0001.html").is_file());
+    assert!(first.join("edgefossil-site.json").is_file());
+    assert!(!first.join("blobs").exists());
+    let rendered = directory_contents(&first)
+        .values()
+        .flat_map(|body| body.iter().copied())
+        .collect::<Vec<_>>();
+    let rendered = String::from_utf8(rendered).unwrap();
+    assert!(rendered.contains("public message"));
+    assert!(!rendered.contains("members-only"));
+    assert!(!rendered.contains("local-only"));
+
+    let repeated = ef(&[
+        "static-build",
+        bundle.to_str().unwrap(),
+        "--output",
+        first.to_str().unwrap(),
+    ]);
+    assert!(!repeated.status.success());
+    assert!(stderr(&repeated).contains("output already exists"));
 }
 
 #[test]

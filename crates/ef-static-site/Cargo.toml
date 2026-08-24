@@ -1,0 +1,21 @@
+[package]
+name = "ef-static-site"
+description = "Deterministic read-only static site projection for EdgeFossil public bundles"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+ef-format = { path = "../ef-format" }
+ef-store-sqlite = { path = "../ef-store-sqlite" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+edgefoss-core = { path = "../edgefoss-core" }
+ed25519-dalek = "2.2"
+
+[lints]
+workspace = true
