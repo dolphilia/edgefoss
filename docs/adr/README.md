@@ -21,5 +21,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0015](0015-realm-scoped-local-read-model.md)              | Derive local reads from one realm                   | Accepted for local alpha         |
 | [0016](0016-accepted-public-bundle-export-verification.md) | Export and verify accepted public graph first       | Accepted for local alpha         |
 | [0017](0017-explicit-composed-realm-bundles.md)            | Compose restricted bundles from verified bases      | Accepted for local alpha         |
+| [0018](0018-transactional-portable-bundle-import.md)       | Reconstruct accepted SQLite state from bundles      | Accepted for local alpha         |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

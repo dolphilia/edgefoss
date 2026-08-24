@@ -73,6 +73,15 @@ cargo run -p ef-cli --bin ef -- export --path /path/to/project \
   --realm local --base public=/safe/export/path/public.edge \
   --base members=/safe/export/path/members.edge \
   --output /safe/export/path/local.edge
+cargo run -p ef-cli --bin ef -- import /safe/export/path/public.edge \
+  --path /path/to/empty-restore
+cargo run -p ef-cli --bin ef -- import /safe/export/path/members.edge \
+  --base public=/safe/export/path/public.edge \
+  --path /path/to/empty-restore
+cargo run -p ef-cli --bin ef -- import /safe/export/path/local.edge \
+  --base public=/safe/export/path/public.edge \
+  --base members=/safe/export/path/members.edge \
+  --path /path/to/empty-restore
 ```
 
 The default destination is `project/public`; `--realm members`, `--local`, and
@@ -90,8 +99,10 @@ bundle requires its exact verified public bundle as `--base`; a local bundle
 requires exact public and members bases. Each output still contains only its
 own realm, so protect members/local bundle directories according to their
 content. A local bundle is an explicit device-backup artifact and is never
-included implicitly in project/member export. Content hunks, historical-change
-diff, and bundle import are not implemented yet.
+included implicitly in project/member export. `import` restores accepted
+portable state into an empty repository in public→members→local order. It does
+not restore signing secrets, tracking rules, or unsigned working snapshots.
+Content hunks and historical-change diff are not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.

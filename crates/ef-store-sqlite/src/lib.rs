@@ -42,6 +42,7 @@ pub enum StoreError {
     InvalidCheckpoint(String),
     InvalidRead(String),
     InvalidBundle(String),
+    InvalidImport(String),
     RefConflict(String),
     Corrupt(String),
 }
@@ -61,6 +62,7 @@ impl fmt::Display for StoreError {
             Self::InvalidCheckpoint(message) => write!(formatter, "invalid checkpoint: {message}"),
             Self::InvalidRead(message) => write!(formatter, "invalid read request: {message}"),
             Self::InvalidBundle(message) => write!(formatter, "invalid bundle: {message}"),
+            Self::InvalidImport(message) => write!(formatter, "invalid import: {message}"),
             Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
@@ -80,6 +82,7 @@ impl Error for StoreError {
             | Self::InvalidCheckpoint(_)
             | Self::InvalidRead(_)
             | Self::InvalidBundle(_)
+            | Self::InvalidImport(_)
             | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }
@@ -310,6 +313,15 @@ pub struct PortableBundle {
     pub manifest: BundleManifest,
     pub manifest_bytes: Vec<u8>,
     pub objects: BTreeMap<String, Vec<u8>>,
+}
+
+/// Result of importing one verified realm into an empty realm slot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportResult {
+    pub project: String,
+    pub realm: Realm,
+    pub semantic_root: String,
+    pub generation: u64,
 }
 
 /// Summary returned after provider-independent bundle verification.
@@ -1053,6 +1065,66 @@ impl LocalRepository {
         Ok(bundle)
     }
 
+    /// Imports one verified realm bundle without restoring local staging state.
+    ///
+    /// Public import initializes an empty repository. Members/local import
+    /// requires the same project and exact accepted lower-realm bases. The
+    /// selected realm must not already contain portable state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid bundles/bases, a non-empty destination,
+    /// mismatched project state, reconstruction mismatch, or `SQLite` failure.
+    pub fn import_bundle(
+        &mut self,
+        manifest_bytes: &[u8],
+        objects: &BTreeMap<String, Vec<u8>>,
+        bases: &[VerifiedBundle],
+    ) -> Result<ImportResult, StoreError> {
+        let verified = verify_portable_bundle(manifest_bytes, objects, bases)?;
+        let manifest = decode_bundle_manifest(manifest_bytes)?;
+        let project_id = parse_artifact_id(&manifest.project)?;
+        let genesis = if manifest.realm == Realm::Public {
+            let body = objects
+                .get(&bundle_object_path("artifacts", &manifest.project))
+                .ok_or_else(|| StoreError::InvalidImport("project genesis is missing".into()))?;
+            decode_project_genesis(body)?
+        } else {
+            if self.project_digest()? != Some(project_id) {
+                return Err(StoreError::InvalidImport(
+                    "bundle project does not match the destination repository".into(),
+                ));
+            }
+            self.project_genesis()?.ok_or(StoreError::Uninitialized)?
+        };
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_import_destination(&transaction, &project_id, &manifest, &genesis)?;
+        insert_imported_bundle(&transaction, &project_id, &manifest, objects)?;
+        let rebuilt = build_realm_bundle(
+            &transaction,
+            &project_id,
+            &manifest.project,
+            &genesis,
+            manifest.realm,
+            &manifest.base_roots,
+        )?;
+        if rebuilt.manifest != manifest || rebuilt.objects != *objects {
+            return Err(StoreError::InvalidImport(
+                "reconstructed accepted state does not match the verified bundle".into(),
+            ));
+        }
+        let generation = imported_generation(&manifest, objects)?;
+        transaction.commit()?;
+        Ok(ImportResult {
+            project: verified.project().to_owned(),
+            realm: verified.realm(),
+            semantic_root: verified.semantic_root().to_owned(),
+            generation,
+        })
+    }
+
     /// Atomically stores a signed change and advances the realm checkpoint ref.
     ///
     /// The operation rechecks both the unsigned working root and ref generation
@@ -1147,6 +1219,172 @@ impl LocalRepository {
 fn bundle_object_path(kind: &str, id: &str) -> String {
     let extension = if kind == "blobs" { "bin" } else { "cbor" };
     format!("{kind}/{}.{extension}", &id[7..])
+}
+
+fn validate_import_destination(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    manifest: &BundleManifest,
+    genesis: &ProjectGenesis,
+) -> Result<(), StoreError> {
+    let local_staging: i64 = connection.query_row(
+        "SELECT (SELECT count(*) FROM working_copy_tracking)
+              + (SELECT count(*) FROM working_snapshot_roots)",
+        [],
+        |row| row.get(0),
+    )?;
+    if local_staging != 0 {
+        return Err(StoreError::InvalidImport(
+            "destination contains tracking rules or working snapshots".into(),
+        ));
+    }
+    if manifest.realm == Realm::Public {
+        let portable_rows: i64 = connection.query_row(
+            "SELECT (SELECT count(*) FROM repository)
+                  + (SELECT count(*) FROM artifacts)
+                  + (SELECT count(*) FROM blobs)
+                  + (SELECT count(*) FROM signatures)
+                  + (SELECT count(*) FROM refs)",
+            [],
+            |row| row.get(0),
+        )?;
+        if portable_rows != 0 {
+            return Err(StoreError::InvalidImport(
+                "public import requires an empty repository database".into(),
+            ));
+        }
+        return Ok(());
+    }
+
+    let stored_project = connection
+        .query_row(
+            "SELECT project_id FROM repository WHERE singleton = 1",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()?
+        .ok_or(StoreError::Uninitialized)?;
+    if stored_project.as_slice() != project_id {
+        return Err(StoreError::InvalidImport(
+            "destination project changed before import".into(),
+        ));
+    }
+    validate_export_base_roots(
+        connection,
+        project_id,
+        &manifest.project,
+        genesis,
+        manifest.realm,
+        &manifest.base_roots,
+    )?;
+    let realm_rows: i64 = connection.query_row(
+        "SELECT
+             (SELECT count(*) FROM artifacts WHERE project_id = ?1 AND realm = ?2)
+           + (SELECT count(*) FROM blobs WHERE project_id = ?1 AND realm = ?2)
+           + (SELECT count(*) FROM refs WHERE project_id = ?1 AND realm = ?2)
+           + (SELECT count(*) FROM signatures s
+                JOIN artifacts a ON a.id = s.artifact_id
+               WHERE s.project_id = ?1 AND a.realm = ?2)",
+        params![project_id.as_slice(), manifest.realm.as_str()],
+        |row| row.get(0),
+    )?;
+    if realm_rows != 0 {
+        return Err(StoreError::InvalidImport(format!(
+            "{} destination realm is not empty",
+            manifest.realm.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn insert_imported_bundle(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    manifest: &BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    for id in &manifest.artifacts {
+        let body = &objects[&bundle_object_path("artifacts", id)];
+        let kind = if id == &manifest.project {
+            "project.genesis"
+        } else if decode_tree(body).is_ok() {
+            "tree"
+        } else if decode_change(body).is_ok() {
+            "change"
+        } else {
+            return Err(StoreError::InvalidImport(
+                "verified artifact kind cannot be reconstructed".into(),
+            ));
+        };
+        let digest = parse_artifact_id(id)?;
+        transaction.execute(
+            "INSERT INTO artifacts(
+                 id, project_id, realm, kind, schema_version, canonical_body
+             ) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![
+                digest.as_slice(),
+                project_id.as_slice(),
+                manifest.realm.as_str(),
+                kind,
+                body
+            ],
+        )?;
+    }
+    if manifest.realm == Realm::Public {
+        transaction.execute(
+            "INSERT INTO repository(singleton, project_id, format_status)
+             VALUES (1, ?1, 'experimental')",
+            params![project_id.as_slice()],
+        )?;
+    }
+    for id in &manifest.blobs {
+        let digest = parse_artifact_id(id)?;
+        let body = &objects[&bundle_object_path("blobs", id)];
+        transaction.execute(
+            "INSERT INTO blobs(project_id, realm, digest, content)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                project_id.as_slice(),
+                manifest.realm.as_str(),
+                digest.as_slice(),
+                body
+            ],
+        )?;
+    }
+    for id in &manifest.signatures {
+        let body = &objects[&bundle_object_path("signatures", id)];
+        let record = decode_signature_record(body)?;
+        store_signature(transaction, project_id, &record, body)?;
+    }
+    let generation = imported_generation(manifest, objects)?;
+    let generation = i64::try_from(generation)
+        .map_err(|_| StoreError::InvalidImport("imported generation is too large".into()))?;
+    let target = parse_artifact_id(&manifest.refs[0].1)?;
+    transaction.execute(
+        "INSERT INTO refs(project_id, realm, name, target_id, generation)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            project_id.as_slice(),
+            manifest.realm.as_str(),
+            manifest.refs[0].0,
+            target.as_slice(),
+            generation
+        ],
+    )?;
+    Ok(())
+}
+
+fn imported_generation(
+    manifest: &BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<u64, StoreError> {
+    let changes = manifest
+        .artifacts
+        .iter()
+        .filter(|id| decode_change(&objects[&bundle_object_path("artifacts", id)]).is_ok())
+        .count();
+    u64::try_from(changes)
+        .map_err(|_| StoreError::InvalidImport("imported generation is too large".into()))
 }
 
 fn validate_export_base_roots(
@@ -3597,6 +3835,137 @@ mod tests {
             repository.export_bundle(Realm::Members, &members_bases),
             Err(StoreError::InvalidBundle(_))
         ));
+    }
+
+    #[test]
+    fn imports_all_realms_transactionally_and_reexports_identical_bundles() {
+        let (mut source, _, _, signing_key) = signed_repository();
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "public restore",
+        );
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Members,
+            "2026-08-24T00:00:03Z",
+            "members restore",
+        );
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Local,
+            "2026-08-24T00:00:04Z",
+            "local restore",
+        );
+        let public = source.export_bundle(Realm::Public, &[]).unwrap();
+        let verified_public =
+            super::verify_portable_bundle(&public.manifest_bytes, &public.objects, &[]).unwrap();
+        let members_roots = vec![(Realm::Public, verified_public.semantic_root().to_owned())];
+        let members = source
+            .export_bundle(Realm::Members, &members_roots)
+            .unwrap();
+        let verified_members = super::verify_portable_bundle(
+            &members.manifest_bytes,
+            &members.objects,
+            std::slice::from_ref(&verified_public),
+        )
+        .unwrap();
+        let local_roots = vec![
+            (Realm::Public, verified_public.semantic_root().to_owned()),
+            (Realm::Members, verified_members.semantic_root().to_owned()),
+        ];
+        let local = source.export_bundle(Realm::Local, &local_roots).unwrap();
+
+        let mut restored = LocalRepository::open_in_memory().unwrap();
+        let public_result = restored
+            .import_bundle(&public.manifest_bytes, &public.objects, &[])
+            .unwrap();
+        assert_eq!(public_result.generation, 1);
+        let public_reexport = restored.export_bundle(Realm::Public, &[]).unwrap();
+        assert_eq!(public_reexport, public);
+
+        let members_result = restored
+            .import_bundle(
+                &members.manifest_bytes,
+                &members.objects,
+                std::slice::from_ref(&verified_public),
+            )
+            .unwrap();
+        assert_eq!(members_result.generation, 1);
+        let members_reexport = restored
+            .export_bundle(Realm::Members, &members_roots)
+            .unwrap();
+        assert_eq!(members_reexport, members);
+
+        let local_result = restored
+            .import_bundle(
+                &local.manifest_bytes,
+                &local.objects,
+                &[verified_public.clone(), verified_members.clone()],
+            )
+            .unwrap();
+        assert_eq!(local_result.generation, 1);
+        let local_reexport = restored.export_bundle(Realm::Local, &local_roots).unwrap();
+        assert_eq!(local_reexport, local);
+        assert!(restored.working_snapshot_roots().unwrap().is_empty());
+        assert_eq!(
+            restored.tracking_counts().unwrap(),
+            TrackingCounts::default()
+        );
+        assert!(matches!(
+            restored.import_bundle(
+                &local.manifest_bytes,
+                &local.objects,
+                &[verified_public, verified_members]
+            ),
+            Err(StoreError::InvalidImport(_))
+        ));
+    }
+
+    #[test]
+    fn failed_import_rolls_back_project_and_all_portable_rows() {
+        let (mut source, _, _, signing_key) = signed_repository();
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "rollback fixture",
+        );
+        let public = source.export_bundle(Realm::Public, &[]).unwrap();
+        let mut target = LocalRepository::open_in_memory().unwrap();
+        target
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER fail_import_signature
+                 BEFORE INSERT ON signatures
+                 BEGIN SELECT RAISE(ABORT, 'injected import failure'); END;",
+            )
+            .unwrap();
+        assert!(matches!(
+            target.import_bundle(&public.manifest_bytes, &public.objects, &[]),
+            Err(StoreError::Sqlite(_))
+        ));
+        for table in ["repository", "artifacts", "blobs", "signatures", "refs"] {
+            let count: i64 = target
+                .connection
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} retained a partial import");
+        }
+        target
+            .connection
+            .execute("DROP TRIGGER fail_import_signature", [])
+            .unwrap();
+        target
+            .import_bundle(&public.manifest_bytes, &public.objects, &[])
+            .unwrap();
     }
 
     #[test]

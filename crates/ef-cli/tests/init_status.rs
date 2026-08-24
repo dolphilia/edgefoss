@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -57,6 +58,24 @@ fn stdout(output: &Output) -> String {
 
 fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).unwrap()
+}
+
+fn bundle_contents(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut contents = BTreeMap::new();
+    contents.insert(
+        "manifest.cbor".into(),
+        fs::read(root.join("manifest.cbor")).unwrap(),
+    );
+    for kind in ["artifacts", "blobs", "signatures"] {
+        for entry in fs::read_dir(root.join(kind)).unwrap() {
+            let entry = entry.unwrap();
+            contents.insert(
+                format!("{kind}/{}", entry.file_name().to_string_lossy()),
+                fs::read(entry.path()).unwrap(),
+            );
+        }
+    }
+    contents
 }
 
 #[test]
@@ -450,6 +469,72 @@ impl CheckpointFixture {
     }
 }
 
+struct ExportedBundles {
+    _directory: TestDirectory,
+    public: PathBuf,
+    members: PathBuf,
+    local: PathBuf,
+    public_base: String,
+    members_base: String,
+}
+
+impl ExportedBundles {
+    fn from_repository(repository: &str) -> Self {
+        let directory = TestDirectory::new();
+        let public = directory.as_ref().join("public.edge");
+        let members = directory.as_ref().join("members.edge");
+        let local = directory.as_ref().join("local.edge");
+        let public_base = format!("public={}", public.display());
+        let members_base = format!("members={}", members.display());
+        for arguments in [
+            vec![
+                "export",
+                "--path",
+                repository,
+                "--realm",
+                "public",
+                "--output",
+                public.to_str().unwrap(),
+            ],
+            vec![
+                "export",
+                "--path",
+                repository,
+                "--realm",
+                "members",
+                "--base",
+                &public_base,
+                "--output",
+                members.to_str().unwrap(),
+            ],
+            vec![
+                "export",
+                "--path",
+                repository,
+                "--realm",
+                "local",
+                "--base",
+                &public_base,
+                "--base",
+                &members_base,
+                "--output",
+                local.to_str().unwrap(),
+            ],
+        ] {
+            let output = ef(&arguments);
+            assert!(output.status.success(), "{}", stderr(&output));
+        }
+        Self {
+            _directory: directory,
+            public,
+            members,
+            local,
+            public_base,
+            members_base,
+        }
+    }
+}
+
 #[test]
 fn snapshots_realm_roots_without_cross_realm_churn() {
     let directory = TestDirectory::new();
@@ -740,6 +825,107 @@ fn exports_and_verifies_composed_members_and_local_bundles() {
     let rejected = ef(&["verify", members.to_str().unwrap(), "--base", &mislabeled]);
     assert!(!rejected.status.success());
     assert!(stderr(&rejected).contains("points to a members bundle"));
+}
+
+#[test]
+fn imports_composed_bundles_into_empty_repository_and_reexports_exactly() {
+    let fixture = CheckpointFixture::new();
+    let bundles = ExportedBundles::from_repository(fixture.root());
+
+    let restored = TestDirectory::new();
+    let restored_path = restored.as_ref().to_str().unwrap();
+    let public_import = ef(&[
+        "import",
+        bundles.public.to_str().unwrap(),
+        "--path",
+        restored_path,
+    ]);
+    assert!(public_import.status.success(), "{}", stderr(&public_import));
+    assert!(stdout(&public_import).contains("imported-realm: public\n"));
+    assert!(stdout(&public_import).contains("generation: 2\n"));
+    let members_import = ef(&[
+        "import",
+        bundles.members.to_str().unwrap(),
+        "--base",
+        &bundles.public_base,
+        "--path",
+        restored_path,
+    ]);
+    assert!(
+        members_import.status.success(),
+        "{}",
+        stderr(&members_import)
+    );
+    let local_import = ef(&[
+        "import",
+        bundles.local.to_str().unwrap(),
+        "--base",
+        &bundles.public_base,
+        "--base",
+        &bundles.members_base,
+        "--path",
+        restored_path,
+    ]);
+    assert!(local_import.status.success(), "{}", stderr(&local_import));
+
+    let status = ef(&["status", "--path", restored_path]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let status = stdout(&status);
+    assert!(status.contains(&format!(
+        "checkpoint-head-public: {}\n",
+        fixture.second_public_head
+    )));
+    assert!(status.contains(&format!(
+        "checkpoint-head-members: {}\n",
+        fixture.members_head
+    )));
+    assert!(status.contains(&format!("checkpoint-head-local: {}\n", fixture.local_head)));
+    assert!(status.contains("tracking-project: 0\n"));
+    assert!(status.contains("working-root-public: -\n"));
+    assert!(status.contains("working-root-members: -\n"));
+    assert!(status.contains("working-root-local: -\n"));
+
+    let reexports = ExportedBundles::from_repository(restored_path);
+    assert_eq!(
+        bundle_contents(&reexports.public),
+        bundle_contents(&bundles.public)
+    );
+    assert_eq!(
+        bundle_contents(&reexports.members),
+        bundle_contents(&bundles.members)
+    );
+    assert_eq!(
+        bundle_contents(&reexports.local),
+        bundle_contents(&bundles.local)
+    );
+
+    let repeated = ef(&[
+        "import",
+        bundles.public.to_str().unwrap(),
+        "--path",
+        restored_path,
+    ]);
+    assert!(!repeated.status.success());
+    assert!(stderr(&repeated).contains("requires an empty repository database"));
+
+    let blob = fs::read_dir(bundles.public.join("blobs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut body = fs::read(&blob).unwrap();
+    body[0] ^= 1;
+    fs::write(blob, body).unwrap();
+    let rejected_target = TestDirectory::new();
+    let rejected = ef(&[
+        "import",
+        bundles.public.to_str().unwrap(),
+        "--path",
+        rejected_target.as_ref().to_str().unwrap(),
+    ]);
+    assert!(!rejected.status.success());
+    assert!(!rejected_target.as_ref().join(".edgefossil").exists());
 }
 
 #[test]

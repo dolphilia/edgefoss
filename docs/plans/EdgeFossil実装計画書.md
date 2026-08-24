@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2f、I3a–I3gはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathではSQLite/CLIからpublic accepted graphのoffline export/verifyまで確立した。I3hとしてmembers/local bundleをlower-realm bundleと明示的に合成し、各realmのobject集合を混ぜずに`base_roots`までdeep verifyする処理をlocal実装・検証中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)、[`I3f read-model evidence`](../evidence/i3f-realm-read-model-local-2026-08-24.md)、[`I3g public bundle evidence`](../evidence/i3g-public-bundle-local-2026-08-24.md)、[`I3h composed bundle evidence`](../evidence/i3h-composed-bundle-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2f、I3a–I3hはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathではSQLite/CLIから3 realmの合成offline export/verifyまで確立した。I3iでは検証済みbundleからprovider固有状態を含まないaccepted graphをempty SQLiteへtransactional importし、同じbundleを再構築する処理をlocal実装・検証済みである（commit/CI確認待ち）。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)、[`I3f read-model evidence`](../evidence/i3f-realm-read-model-local-2026-08-24.md)、[`I3g public bundle evidence`](../evidence/i3g-public-bundle-local-2026-08-24.md)、[`I3h composed bundle evidence`](../evidence/i3h-composed-bundle-local-2026-08-24.md)、[`I3i transactional import evidence`](../evidence/i3i-transactional-import-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-24）: I3a–I3gはcommit/CI済み。I3dではschema migration v3とrealm別unsigned snapshot、I3eではschema migration v4と署名済みrealm checkpoint、I3fでは署名検証済みrealm history/diffを実装した。I3gではbaseを必要としないpublic accepted graphをunpacked `bundle-v0`へ出力する`ef export --realm public`と、source DB/Cloudflareに依存しないdeep `ef verify`を実装し、commit/CIまで確認した。I3hではmembers/local bundle自身へlower realm objectを混ぜず、`--base public=...`および`--base members=...`で明示されたbundleをlower realmから順にdeep verifyし、project、actor、semantic root、members→public compositionをmanifestの`base_roots`と照合する合成export/verifyを実装中である。empty DBへのtransactional importと同一semantic-root再exportは次incrementへ分ける。
+実行状況（2026-08-24）: I3a–I3hはcommit/CI済み。I3dではrealm別unsigned snapshot、I3eでは署名済みrealm checkpoint、I3fでは署名検証済みrealm history/diff、I3gではpublic bundle export/deep verifyを実装した。I3hではmembers/local bundleを明示したlower-realm bundleと合成し、各realmのobject集合を混ぜずに`base_roots`まで検証する経路を実装・commit/CI確認した。I3iではpublic→members→localの順にempty SQLite repositoryへaccepted portable stateだけをtransactional importし、各段階の再exportがmanifest/objectをbyte-for-byte再現するrestore経路をlocal実装・検証済みである（commit/CI確認待ち）。tracking intent、unsigned working root、signing seed、authority固有receiptは復元しない。G2の残条件であるprocess-kill harnessと1万file/10万artifact baselineは次increment以降へ分ける。
 
 成果物:
 
@@ -565,9 +565,9 @@ ef snapshot
 ef diff --realm public
 ef checkpoint --realm public -m "Initial parser" --signing-key-file /safe/path/outside/project/owner.seed
 ef history --realm public --limit 20
-ef export --view public public.edge
-ef export --view authority-complete complete.edge
-ef verify complete.edge
+ef export --realm public --output public.edge
+ef verify public.edge
+ef import public.edge --path /path/to/empty-restore
 ```
 
 local signing checkpoint U0.5:

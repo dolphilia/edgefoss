@@ -2,9 +2,9 @@
 
 - Increment: I3h, explicit members/local base composition
 - Base commit: `a7f0bbc520f6f0aac8f88be627ac2820abbfd288`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `2c33a2bdd43f1c878de52fe23ed2cf0767a7c7f9`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: local pass; commit, push, and GitHub Actions CI confirmed by the user
 
 ## Demonstrated slice
 

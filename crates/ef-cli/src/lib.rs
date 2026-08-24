@@ -42,6 +42,7 @@ Usage:
   ef diff --realm <public|members|local> [--path <DIRECTORY>]
   ef export --realm <public|members|local> --output <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]... [--path <DIRECTORY>]
   ef verify <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]...
+  ef import <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]... [--path <DIRECTORY>]
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
@@ -91,6 +92,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
         Some("diff") => run_diff(&parse_diff(arguments)?),
         Some("export") => run_export(&parse_export(arguments)?),
         Some("verify") => run_verify(&parse_verify(arguments)?),
+        Some("import") => run_import(&parse_import(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -160,6 +162,12 @@ struct ExportOptions {
 }
 
 struct VerifyOptions {
+    bundle: PathBuf,
+    bases: Vec<BundleBaseOption>,
+}
+
+struct ImportOptions {
+    path: PathBuf,
     bundle: PathBuf,
     bases: Vec<BundleBaseOption>,
 }
@@ -479,6 +487,35 @@ fn parse_verify(arguments: impl Iterator<Item = OsString>) -> Result<VerifyOptio
         }
     }
     Ok(VerifyOptions {
+        bundle: bundle.ok_or_else(|| CliError::new("missing required BUNDLE_DIRECTORY"))?,
+        bases,
+    })
+}
+
+fn parse_import(arguments: impl Iterator<Item = OsString>) -> Result<ImportOptions, CliError> {
+    let mut path = None;
+    let mut bundle = None;
+    let mut bases = Vec::new();
+    let mut arguments = arguments.peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some("--base") => {
+                let value = parse_utf8_value(&mut arguments, "--base")?;
+                push_bundle_base(&mut bases, &value)?;
+            }
+            Some(value) if value.starts_with('-') => {
+                return Err(CliError::new(format!("unknown import option `{value}`")));
+            }
+            _ => set_once(&mut bundle, PathBuf::from(argument), "BUNDLE_DIRECTORY")?,
+        }
+    }
+    Ok(ImportOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
         bundle: bundle.ok_or_else(|| CliError::new("missing required BUNDLE_DIRECTORY"))?,
         bases,
     })
@@ -865,6 +902,105 @@ fn run_verify(options: &VerifyOptions) -> Result<(), CliError> {
     println!("blobs: {}", verified.blob_count());
     println!("signatures: {}", verified.signature_count());
     println!("refs: {}", verified.ref_count());
+    Ok(())
+}
+
+fn run_import(options: &ImportOptions) -> Result<(), CliError> {
+    let bundle_root = canonical_bundle_directory(&options.bundle)?;
+    let (manifest_bytes, objects) = read_bundle_directory(&bundle_root)?;
+    let manifest = decode_bundle_manifest(&manifest_bytes)
+        .map_err(|error| CliError::new(format!("invalid bundle manifest: {error}")))?;
+    let bases = verify_base_directories(manifest.realm, &options.bases)?;
+    verify_portable_bundle(&manifest_bytes, &objects, &bases)
+        .map_err(|error| CliError::new(error.to_string()))?;
+
+    let root = canonical_directory(&options.path)?;
+    let metadata_path = root.join(METADATA_DIRECTORY);
+    let database_path = metadata_path.join(DATABASE_FILE);
+    reject_symlink_if_present(&metadata_path, "repository metadata directory")?;
+    reject_symlink_if_present(&database_path, "repository database")?;
+    let mut created_metadata = false;
+    let mut created_database = false;
+    if !metadata_path.exists() {
+        create_metadata_directory(&metadata_path)?;
+        created_metadata = true;
+    } else if !metadata_path.is_dir() {
+        return Err(CliError::new(format!(
+            "repository metadata path is not a directory: {}",
+            metadata_path.display()
+        )));
+    }
+    if !database_path.exists() {
+        if let Err(error) = create_database_file(&database_path) {
+            if created_metadata {
+                let _ = fs::remove_dir(&metadata_path);
+            }
+            return Err(error);
+        }
+        created_database = true;
+    }
+
+    let result = (|| -> Result<ef_store_sqlite::ImportResult, CliError> {
+        let mut repository = open_repository(&database_path)?;
+        repository
+            .import_bundle(&manifest_bytes, &objects, &bases)
+            .map_err(|error| CliError::new(error.to_string()))
+    })();
+    let imported = match result {
+        Ok(imported) => imported,
+        Err(error) => {
+            if let Err(cleanup) = cleanup_failed_import(
+                &metadata_path,
+                &database_path,
+                created_metadata,
+                created_database,
+            ) {
+                return Err(CliError::new(format!(
+                    "{error}; additionally, import cleanup failed: {cleanup}"
+                )));
+            }
+            return Err(error);
+        }
+    };
+    println!("repository: {}", root.display());
+    println!("imported-project: {}", imported.project);
+    println!("imported-realm: {}", imported.realm.as_str());
+    println!("semantic-root: {}", imported.semantic_root);
+    println!("generation: {}", imported.generation);
+    Ok(())
+}
+
+fn cleanup_failed_import(
+    metadata_path: &Path,
+    database_path: &Path,
+    created_metadata: bool,
+    created_database: bool,
+) -> Result<(), CliError> {
+    if created_metadata {
+        fs::remove_dir_all(metadata_path).map_err(|error| {
+            CliError::new(format!(
+                "cannot remove {}: {error}",
+                metadata_path.display()
+            ))
+        })?;
+    } else if created_database {
+        for path in [
+            database_path.to_path_buf(),
+            metadata_path.join(format!("{DATABASE_FILE}-wal")),
+            metadata_path.join(format!("{DATABASE_FILE}-shm")),
+        ] {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(CliError::new(format!(
+                        "cannot remove {}: {error}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
