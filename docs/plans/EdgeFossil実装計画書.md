@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2f、I3a–I3dはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、SQLite/CLI/tracking intentとrealm別unsigned snapshotに続き、I3eとして秘密鍵をrepository外に保つ署名境界と、realm別change/refを一transactionで確定するcheckpointをlocal実装・検証中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2f、I3a–I3eはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、SQLite/CLI/tracking intent、realm別unsigned snapshot、repository外の秘密鍵から署名するrealm別checkpointまで確立した。I3fとしてaccepted headから署名を再検証するrealm別historyと、working snapshotを同じrealmのheadだけと比較する構造diff read modelをlocal実装・検証中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)、[`I3f read-model evidence`](../evidence/i3f-realm-read-model-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-24）: I3a–I3dはcommit/CI済み。I3dではschema migration v3、realm複合keyのraw blob、canonical tree builder、filesystem raceのbest-effort検出、symlink lexical escape拒否、全realm working rootの一括transaction置換を実装した。`ef snapshot`はunsigned working stateでありchange/ref/historyを進めず、members-only変更でpublic rootが変わらないことをE2Eで固定した。I3eではschema migration v4、保護済みlocal key fileを作る`ef keygen`、genesis/reachable tree/changeのexact署名検証、realm別`heads/main` generation CAS、`ef checkpoint --realm ...`を実装した。秘密鍵はrepository DBやartifactへ保存せず、明示指定したrepository外のkey fileからcheckpoint時だけ読む。local verification後にcommit/CIを確認し、その次はrealm別`ef history`とdiff/read modelへ進む。
+実行状況（2026-08-24）: I3a–I3eはcommit/CI済み。I3dではschema migration v3、realm複合keyのraw blob、canonical tree builder、filesystem raceのbest-effort検出、symlink lexical escape拒否、全realm working rootの一括transaction置換を実装した。`ef snapshot`はunsigned working stateでありchange/ref/historyを進めず、members-only変更でpublic rootが変わらないことをE2Eで固定した。I3eではschema migration v4、保護済みlocal key fileを作る`ef keygen`、genesis/reachable tree/changeのexact署名検証、realm別`heads/main` generation CAS、`ef checkpoint --realm ...`を実装した。秘密鍵はrepository DBやartifactへ保存せず、明示指定したrepository外のkey fileからcheckpoint時だけ読む。I3fでは永続schemaを増やさず、realm別headから導出する署名検証済み`ef history`と、同じrealmのworking snapshot対headを比較する`ef diff`構造read modelを実装した。local full check/buildを通してcommit/CI確認待ちとし、その後はI3gでaccepted graphからrealm bundleを構成する`export`/`verify`へ進む。
 
 成果物:
 
@@ -562,7 +562,9 @@ ef track src/
 ef track --realm members ops/runbook.md
 ef track --local notes/private.md
 ef snapshot
+ef diff --realm public
 ef checkpoint --realm public -m "Initial parser" --signing-key-file /safe/path/outside/project/owner.seed
+ef history --realm public --limit 20
 ef export --view public public.edge
 ef export --view authority-complete complete.edge
 ef verify complete.edge

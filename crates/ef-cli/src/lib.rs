@@ -1,5 +1,6 @@
 //! Local `EdgeFossil` command-line workflows.
 
+use std::fmt::Write as _;
 use std::{
     collections::BTreeSet,
     error::Error,
@@ -14,10 +15,10 @@ use std::{
 use ed25519_dalek::{Signer, SigningKey};
 use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
 use ef_format::{
-    ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, artifact_id,
-    artifact_signature_message, encode_change, encode_project_genesis, validate_path,
+    ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, TreeEntryMode,
+    artifact_id, artifact_signature_message, encode_change, encode_project_genesis, validate_path,
 };
-use ef_store_sqlite::{LocalRepository, TrackingMode, TrackingRule, TrackingScope};
+use ef_store_sqlite::{DiffKind, LocalRepository, TrackingMode, TrackingRule, TrackingScope};
 use zeroize::Zeroizing;
 
 const METADATA_DIRECTORY: &str = ".edgefossil";
@@ -31,6 +32,8 @@ Usage:
   ef track [--local | --none | --realm <public|members>] [--path <DIRECTORY>] <TARGET>
   ef snapshot [--path <DIRECTORY>]
   ef checkpoint --realm <public|members|local> -m <MESSAGE> --signing-key-file <KEY_FILE> [--path <DIRECTORY>]
+  ef history --realm <public|members|local> [--limit <1..1000>] [--path <DIRECTORY>]
+  ef diff --realm <public|members|local> [--path <DIRECTORY>]
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
@@ -76,6 +79,8 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
         Some("track") => run_track(&parse_track(arguments)?),
         Some("snapshot") => run_snapshot(&parse_snapshot(arguments)?),
         Some("checkpoint") => run_checkpoint(&parse_checkpoint(arguments)?),
+        Some("history") => run_history(&parse_history(arguments)?),
+        Some("diff") => run_diff(&parse_diff(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -124,6 +129,17 @@ struct CheckpointOptions {
     realm: Realm,
     message: String,
     signing_key_file: PathBuf,
+}
+
+struct HistoryOptions {
+    path: PathBuf,
+    realm: Realm,
+    limit: usize,
+}
+
+struct DiffOptions {
+    path: PathBuf,
+    realm: Realm,
 }
 
 #[derive(Clone, Copy)]
@@ -311,6 +327,72 @@ fn parse_checkpoint(
         message: message.ok_or_else(|| CliError::new("missing required option -m/--message"))?,
         signing_key_file: signing_key_file
             .ok_or_else(|| CliError::new("missing required option --signing-key-file"))?,
+    })
+}
+
+fn parse_history(arguments: impl Iterator<Item = OsString>) -> Result<HistoryOptions, CliError> {
+    let mut path = None;
+    let mut realm = None;
+    let mut limit = None;
+    let mut arguments = arguments.peekable();
+    while let Some(option) = arguments.next() {
+        match option.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some("--realm") => set_once(
+                &mut realm,
+                parse_checkpoint_realm(&parse_utf8_value(&mut arguments, "--realm")?)?,
+                "--realm",
+            )?,
+            Some("--limit") => {
+                let value = parse_utf8_value(&mut arguments, "--limit")?;
+                let value = value.parse::<usize>().map_err(|_| {
+                    CliError::new("--limit must be a decimal integer between 1 and 1000")
+                })?;
+                if !(1..=1_000).contains(&value) {
+                    return Err(CliError::new(
+                        "--limit must be a decimal integer between 1 and 1000",
+                    ));
+                }
+                set_once(&mut limit, value, "--limit")?;
+            }
+            Some(other) => return Err(CliError::new(format!("unknown history option `{other}`"))),
+            None => return Err(CliError::new("history option must be valid UTF-8")),
+        }
+    }
+    Ok(HistoryOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
+        realm: realm.ok_or_else(|| CliError::new("missing required option --realm"))?,
+        limit: limit.unwrap_or(20),
+    })
+}
+
+fn parse_diff(arguments: impl Iterator<Item = OsString>) -> Result<DiffOptions, CliError> {
+    let mut path = None;
+    let mut realm = None;
+    let mut arguments = arguments.peekable();
+    while let Some(option) = arguments.next() {
+        match option.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some("--realm") => set_once(
+                &mut realm,
+                parse_checkpoint_realm(&parse_utf8_value(&mut arguments, "--realm")?)?,
+                "--realm",
+            )?,
+            Some(other) => return Err(CliError::new(format!("unknown diff option `{other}`"))),
+            None => return Err(CliError::new("diff option must be valid UTF-8")),
+        }
+    }
+    Ok(DiffOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
+        realm: realm.ok_or_else(|| CliError::new("missing required option --realm"))?,
     })
 }
 
@@ -557,6 +639,90 @@ fn run_checkpoint(options: &CheckpointOptions) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_history(options: &HistoryOptions) -> Result<(), CliError> {
+    let start = canonical_directory(&options.path)?;
+    let root = find_repository_root(&start)?.ok_or_else(|| {
+        CliError::new(format!(
+            "no EdgeFossil repository found from {}",
+            start.display()
+        ))
+    })?;
+    let repository = open_repository(&root.join(METADATA_DIRECTORY).join(DATABASE_FILE))?;
+    let entries = repository
+        .history(options.realm, options.limit)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    println!("realm: {}", options.realm.as_str());
+    println!("entries: {}", entries.len());
+    for entry in entries {
+        println!("change: {}", entry.id);
+        println!("created-at: {}", entry.created_at);
+        println!("logical-clock: {}", entry.logical_clock);
+        println!("root: {}", entry.root);
+        println!("parent: {}", entry.parent.as_deref().unwrap_or("-"));
+        println!("message: {}", escape_terminal_text(&entry.message));
+    }
+    Ok(())
+}
+
+fn run_diff(options: &DiffOptions) -> Result<(), CliError> {
+    let start = canonical_directory(&options.path)?;
+    let root = find_repository_root(&start)?.ok_or_else(|| {
+        CliError::new(format!(
+            "no EdgeFossil repository found from {}",
+            start.display()
+        ))
+    })?;
+    let repository = open_repository(&root.join(METADATA_DIRECTORY).join(DATABASE_FILE))?;
+    let entries = repository
+        .working_diff(options.realm)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    println!("realm: {}", options.realm.as_str());
+    println!("changes: {}", entries.len());
+    for entry in entries {
+        let status = match entry.kind {
+            DiffKind::Added => "A",
+            DiffKind::Modified => "M",
+            DiffKind::Deleted => "D",
+        };
+        let mode = match (entry.before, entry.after) {
+            (Some(before), Some(after)) if before != after => {
+                format!("{}->{}", tree_mode(before), tree_mode(after))
+            }
+            (_, Some(after)) => tree_mode(after).into(),
+            (Some(before), None) => tree_mode(before).into(),
+            (None, None) => return Err(CliError::new("diff entry has no path mode")),
+        };
+        println!("{status}\t{mode}\t{}", entry.path);
+    }
+    Ok(())
+}
+
+const fn tree_mode(mode: TreeEntryMode) -> &'static str {
+    match mode {
+        TreeEntryMode::File => "file",
+        TreeEntryMode::Executable => "executable",
+        TreeEntryMode::Directory => "directory",
+        TreeEntryMode::Symlink => "symlink",
+    }
+}
+
+fn escape_terminal_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character.is_control() => {
+                let _ = write!(escaped, "\\u{{{:x}}}", u32::from(character));
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
 fn sign_artifact(signing_key: &SigningKey, id: &str) -> Result<SignatureRecord, CliError> {
     let message = artifact_signature_message(id)
         .map_err(|error| CliError::new(format!("cannot sign artifact: {error}")))?;
@@ -702,7 +868,7 @@ fn run_status(options: &StatusOptions) -> Result<(), CliError> {
 
     println!("repository: {}", root.display());
     println!("project: {project_id}");
-    println!("name: {}", genesis.name);
+    println!("name: {}", escape_terminal_text(&genesis.name));
     println!("schema: {schema_version}");
     println!("integrity: ok");
     println!("tracking-project: {}", tracking_counts.project);

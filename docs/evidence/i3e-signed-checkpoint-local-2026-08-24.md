@@ -2,9 +2,9 @@
 
 - Increment: I3e, protected local key and signed realm checkpoints
 - Base commit: `6697e6cd8b0c3f2f75be16896a837e88b524badb`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `4ad5c780437dd0e1b6a931b10297e70259f71746`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: local pass; owner confirmed GitHub Actions pass on 2026-08-24
 
 ## Demonstrated slice
 

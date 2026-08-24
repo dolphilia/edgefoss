@@ -54,9 +54,13 @@ cargo run -p ef-cli --bin ef -- track --path /path/to/project \
 cargo run -p ef-cli --bin ef -- status --path /path/to/project \
   --explain ops/runbook.md
 cargo run -p ef-cli --bin ef -- snapshot --path /path/to/project
+cargo run -p ef-cli --bin ef -- diff --path /path/to/project \
+  --realm public
 cargo run -p ef-cli --bin ef -- checkpoint --path /path/to/project \
   --realm public -m "Initial parser" \
   --signing-key-file /safe/path/outside/project/owner.seed
+cargo run -p ef-cli --bin ef -- history --path /path/to/project \
+  --realm public --limit 20
 ```
 
 The default destination is `project/public`; `--realm members`, `--local`, and
@@ -64,8 +68,11 @@ The default destination is `project/public`; `--realm members`, `--local`, and
 not a portable policy artifact. `snapshot` reads selected files, builds
 realm-isolated raw blobs and canonical trees, and atomically replaces unsigned
 working roots. `checkpoint` signs and advances exactly one realm's `heads/main`
-ref atomically; use a public-safe message for the public realm. History, diff,
-and export/import commands are not implemented yet.
+ref atomically; use a public-safe message for the public realm. `diff` compares
+the latest snapshot with that realm's accepted head using structural
+name/status output, and `history` walks only that realm's verified checkpoint
+chain. Content hunks, historical-change diff, and export/import commands are
+not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.

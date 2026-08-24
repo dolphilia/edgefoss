@@ -11,9 +11,9 @@ use edgefoss_core::BuiltRealmSnapshot;
 use ef_format::{
     ArtifactMeta, ChangeArtifact, FormatError, GraphArtifactKind, GraphArtifactSummary, PathError,
     ProjectGenesis, Realm, SignatureRecord, TreeEntryMode, artifact_id, decode_change,
-    decode_project_genesis, decode_tree, encode_change, encode_project_genesis,
-    encode_signature_record, encode_tree, parse_artifact_id, validate_change_graph, validate_path,
-    verify_artifact_id, verify_artifact_signature,
+    decode_project_genesis, decode_signature_record, decode_tree, encode_change,
+    encode_project_genesis, encode_signature_record, encode_tree, parse_artifact_id,
+    validate_change_graph, validate_path, verify_artifact_id, verify_artifact_signature,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -23,6 +23,8 @@ const MIGRATION_2: &str = include_str!("../migrations/0002_working_copy_tracking
 const MIGRATION_3: &str = include_str!("../migrations/0003_working_snapshots.sql");
 const MIGRATION_4: &str = include_str!("../migrations/0004_signed_checkpoints.sql");
 const CHECKPOINT_REF: &str = "heads/main";
+const MAX_HISTORY_LIMIT: usize = 1_000;
+const MAX_DIFF_ENTRIES: usize = 100_000;
 
 /// Storage failure with a stable distinction for initialization conflicts.
 #[derive(Debug)]
@@ -35,6 +37,7 @@ pub enum StoreError {
     InvalidTracking(String),
     InvalidSnapshot(String),
     InvalidCheckpoint(String),
+    InvalidRead(String),
     RefConflict(String),
     Corrupt(String),
 }
@@ -52,6 +55,7 @@ impl fmt::Display for StoreError {
             Self::InvalidTracking(message) => write!(formatter, "invalid tracking rule: {message}"),
             Self::InvalidSnapshot(message) => write!(formatter, "invalid snapshot: {message}"),
             Self::InvalidCheckpoint(message) => write!(formatter, "invalid checkpoint: {message}"),
+            Self::InvalidRead(message) => write!(formatter, "invalid read request: {message}"),
             Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
@@ -69,6 +73,7 @@ impl Error for StoreError {
             | Self::InvalidTracking(_)
             | Self::InvalidSnapshot(_)
             | Self::InvalidCheckpoint(_)
+            | Self::InvalidRead(_)
             | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }
@@ -263,6 +268,34 @@ pub struct CheckpointHead {
     pub realm: Realm,
     pub id: String,
     pub generation: u64,
+}
+
+/// One verified change projected from a realm's accepted checkpoint history.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryEntry {
+    pub id: String,
+    pub root: String,
+    pub parent: Option<String>,
+    pub logical_clock: u64,
+    pub created_at: String,
+    pub message: String,
+}
+
+/// Structural change between an accepted head and one unsigned working root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiffKind {
+    Added,
+    Modified,
+    Deleted,
+}
+
+/// One realm-owned path in the structural working diff.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiffEntry {
+    pub kind: DiffKind,
+    pub path: String,
+    pub before: Option<TreeEntryMode>,
+    pub after: Option<TreeEntryMode>,
 }
 
 /// One open local repository database.
@@ -787,6 +820,126 @@ impl LocalRepository {
         Ok(heads)
     }
 
+    /// Reads newest-first verified history from one realm's accepted head.
+    ///
+    /// Only the selected realm ref and its linear parent chain are resolved.
+    /// Stored signatures are revalidated before an entry is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid limit, malformed/cross-realm history,
+    /// missing signatures, or repository corruption.
+    pub fn history(&self, realm: Realm, limit: usize) -> Result<Vec<HistoryEntry>, StoreError> {
+        if !(1..=MAX_HISTORY_LIMIT).contains(&limit) {
+            return Err(StoreError::InvalidRead(format!(
+                "history limit must be between 1 and {MAX_HISTORY_LIMIT}"
+            )));
+        }
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let project = ef_format::format_artifact_id(&project_id);
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let Some((head, _)) = query_ref(&self.connection, &project_id, realm, CHECKPOINT_REF)?
+        else {
+            return Ok(Vec::new());
+        };
+        verify_stored_signature(&self.connection, &project_id, &project, &genesis.actor_key)?;
+
+        let mut entries = Vec::with_capacity(limit);
+        let mut next = Some(head);
+        let mut seen = HashSet::new();
+        while entries.len() < limit {
+            let Some(id) = next.take() else {
+                break;
+            };
+            if !seen.insert(id.clone()) {
+                return Err(StoreError::Corrupt(
+                    "checkpoint history contains a parent cycle".into(),
+                ));
+            }
+            let change = load_verified_change(
+                &self.connection,
+                &project_id,
+                &project,
+                &genesis,
+                realm,
+                &id,
+            )?;
+            if change.meta.parents.len() > 1 {
+                return Err(StoreError::InvalidRead(
+                    "merge history is not supported by the I3f linear reader".into(),
+                ));
+            }
+            let parent = change.meta.parents.first().cloned();
+            entries.push(HistoryEntry {
+                id,
+                root: change.root,
+                parent: parent.clone(),
+                logical_clock: change.meta.logical_clock,
+                created_at: change.meta.created_at,
+                message: change.message,
+            });
+            next = parent;
+        }
+        Ok(entries)
+    }
+
+    /// Compares one realm's unsigned working snapshot with its accepted head.
+    ///
+    /// Directory target hashes are intentionally ignored so a child edit does
+    /// not also report every ancestor directory as modified. Path presence,
+    /// entry mode, file/blob target, and symlink target remain significant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing working snapshot, invalid accepted
+    /// signatures, malformed trees/blobs, or excessive diff size.
+    pub fn working_diff(&self, realm: Realm) -> Result<Vec<DiffEntry>, StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let project = ef_format::format_artifact_id(&project_id);
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let working_root =
+            query_working_root(&self.connection, &project_id, realm)?.ok_or_else(|| {
+                StoreError::InvalidRead(format!(
+                    "{} has no working snapshot; run ef snapshot first",
+                    realm.as_str()
+                ))
+            })?;
+        let working = flatten_tree(
+            &self.connection,
+            &project_id,
+            &project,
+            &genesis,
+            realm,
+            &working_root,
+            false,
+        )?;
+        let accepted = if let Some((head, _)) =
+            query_ref(&self.connection, &project_id, realm, CHECKPOINT_REF)?
+        {
+            verify_stored_signature(&self.connection, &project_id, &project, &genesis.actor_key)?;
+            let change = load_verified_change(
+                &self.connection,
+                &project_id,
+                &project,
+                &genesis,
+                realm,
+                &head,
+            )?;
+            flatten_tree(
+                &self.connection,
+                &project_id,
+                &project,
+                &genesis,
+                realm,
+                &change.root,
+                true,
+            )?
+        } else {
+            BTreeMap::new()
+        };
+        diff_tree_entries(&accepted, &working)
+    }
+
     /// Atomically stores a signed change and advances the realm checkpoint ref.
     ///
     /// The operation rechecks both the unsigned working root and ref generation
@@ -1256,6 +1409,196 @@ fn load_graph_summary(
     })
 }
 
+fn verify_stored_signature(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    artifact: &str,
+    actor_key: &[u8; 32],
+) -> Result<(), StoreError> {
+    let artifact_digest = parse_artifact_id(artifact)?;
+    let stored = connection
+        .query_row(
+            "SELECT storage_digest, project_id, canonical_record
+             FROM signatures WHERE artifact_id = ?1 AND actor_key = ?2",
+            params![artifact_digest.as_slice(), actor_key.as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| StoreError::Corrupt("accepted artifact signature is missing".into()))?;
+    let storage_digest: [u8; 32] = stored
+        .0
+        .try_into()
+        .map_err(|_| StoreError::Corrupt("signature storage digest is not 32 bytes".into()))?;
+    if stored.1.as_slice() != project_id
+        || ef_format::format_artifact_id(&storage_digest) != artifact_id(&stored.2)
+    {
+        return Err(StoreError::Corrupt(
+            "stored artifact signature metadata is invalid".into(),
+        ));
+    }
+    let record = decode_signature_record(&stored.2)
+        .map_err(|_| StoreError::Corrupt("stored artifact signature is invalid".into()))?;
+    verify_artifact_signature(&record, artifact, actor_key)
+        .map_err(|_| StoreError::Corrupt("stored artifact signature is invalid".into()))
+}
+
+fn load_verified_change(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+    realm: Realm,
+    id: &str,
+) -> Result<ChangeArtifact, StoreError> {
+    let change = load_change(connection, project_id, project, realm, id)?;
+    if change.meta.actor_key != genesis.actor_key {
+        return Err(StoreError::Corrupt(
+            "accepted change actor is not supported by this repository version".into(),
+        ));
+    }
+    verify_stored_signature(connection, project_id, id, &change.meta.actor_key)?;
+    load_tree(
+        connection,
+        project_id,
+        project,
+        genesis.actor_key,
+        realm,
+        &change.root,
+    )?;
+    verify_stored_signature(connection, project_id, &change.root, &genesis.actor_key)?;
+
+    let mut summaries = BTreeMap::new();
+    summaries.insert(
+        change.root.clone(),
+        load_graph_summary(connection, project_id, project, &change.root)?,
+    );
+    for parent in &change.meta.parents {
+        summaries.insert(
+            parent.clone(),
+            load_graph_summary(connection, project_id, project, parent)?,
+        );
+    }
+    validate_change_graph(&change, |candidate| summaries.get(candidate).cloned())?;
+    Ok(change)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TreeState {
+    mode: TreeEntryMode,
+    target: Option<String>,
+}
+
+fn flatten_tree(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+    realm: Realm,
+    root: &str,
+    require_signatures: bool,
+) -> Result<BTreeMap<String, TreeState>, StoreError> {
+    let tree_ids = reachable_tree_ids(
+        connection,
+        project_id,
+        project,
+        genesis.actor_key,
+        realm,
+        root,
+    )?;
+    if require_signatures {
+        for id in &tree_ids {
+            verify_stored_signature(connection, project_id, id, &genesis.actor_key)?;
+        }
+    }
+
+    let mut flattened = BTreeMap::new();
+    let mut pending = vec![(root.to_owned(), String::new())];
+    while let Some((tree_id, prefix)) = pending.pop() {
+        let tree = load_tree(
+            connection,
+            project_id,
+            project,
+            genesis.actor_key,
+            realm,
+            &tree_id,
+        )?;
+        for entry in tree.entries {
+            let path = if prefix.is_empty() {
+                entry.name
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            validate_path(&path).map_err(|error| StoreError::Corrupt(error.to_string()))?;
+            let target = if entry.mode == TreeEntryMode::Directory {
+                None
+            } else {
+                Some(entry.target.clone())
+            };
+            if flattened
+                .insert(
+                    path.clone(),
+                    TreeState {
+                        mode: entry.mode,
+                        target,
+                    },
+                )
+                .is_some()
+            {
+                return Err(StoreError::Corrupt(
+                    "tree graph produces a duplicate repository path".into(),
+                ));
+            }
+            if flattened.len() > MAX_DIFF_ENTRIES {
+                return Err(StoreError::InvalidRead(format!(
+                    "tree exceeds the I3f diff limit of {MAX_DIFF_ENTRIES} paths"
+                )));
+            }
+            if entry.mode == TreeEntryMode::Directory {
+                pending.push((entry.target, path));
+            }
+        }
+    }
+    Ok(flattened)
+}
+
+fn diff_tree_entries(
+    before: &BTreeMap<String, TreeState>,
+    after: &BTreeMap<String, TreeState>,
+) -> Result<Vec<DiffEntry>, StoreError> {
+    let paths: BTreeSet<_> = before.keys().chain(after.keys()).cloned().collect();
+    let mut diff = Vec::new();
+    for path in paths {
+        let old = before.get(&path);
+        let new = after.get(&path);
+        let kind = match (old, new) {
+            (None, Some(_)) => Some(DiffKind::Added),
+            (Some(_), None) => Some(DiffKind::Deleted),
+            (Some(old), Some(new)) if old != new => Some(DiffKind::Modified),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            diff.push(DiffEntry {
+                kind,
+                path,
+                before: old.map(|entry| entry.mode),
+                after: new.map(|entry| entry.mode),
+            });
+            if diff.len() > MAX_DIFF_ENTRIES {
+                return Err(StoreError::InvalidRead(format!(
+                    "diff exceeds the I3f limit of {MAX_DIFF_ENTRIES} paths"
+                )));
+            }
+        }
+    }
+    Ok(diff)
+}
+
 fn validate_checkpoint_signatures(
     signatures: &[SignatureRecord],
     expected_artifacts: &BTreeSet<String>,
@@ -1623,9 +1966,9 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
     use ef_format::{
-        ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, artifact_id,
-        artifact_signature_message, encode_change, encode_project_genesis, encode_tree,
-        parse_artifact_id,
+        ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, TreeEntryMode,
+        artifact_id, artifact_signature_message, encode_change, encode_project_genesis,
+        encode_tree, parse_artifact_id,
     };
     use rusqlite::{Connection, params};
 
@@ -1669,14 +2012,24 @@ mod tests {
             &project,
             genesis.actor_key,
             &genesis.created_at,
-            &[SnapshotInput {
-                path: "file.txt".into(),
-                realm: Realm::Public,
-                kind: SnapshotInputKind::File {
-                    bytes: b"signed".to_vec(),
-                    executable: false,
+            &[
+                SnapshotInput {
+                    path: "file.txt".into(),
+                    realm: Realm::Public,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"signed".to_vec(),
+                        executable: false,
+                    },
                 },
-            }],
+                SnapshotInput {
+                    path: "members.txt".into(),
+                    realm: Realm::Members,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"restricted".to_vec(),
+                        executable: false,
+                    },
+                },
+            ],
         )
         .unwrap();
         repository
@@ -1714,6 +2067,22 @@ mod tests {
         ids.push(change_id.clone());
         let signatures = ids.iter().map(|id| sign(signing_key, id)).collect();
         (change_id, signatures)
+    }
+
+    fn commit_realm(
+        repository: &mut LocalRepository,
+        signing_key: &SigningKey,
+        realm: Realm,
+        created_at: &str,
+        message: &str,
+    ) -> String {
+        let basis = repository.checkpoint_basis(realm).unwrap();
+        let change = change_for_basis(&basis, created_at, message);
+        let (change_id, signatures) = signatures_for_basis(&basis, &change, signing_key);
+        repository
+            .commit_checkpoint(&change, basis.expected_generation, &signatures)
+            .unwrap();
+        change_id
     }
 
     #[test]
@@ -2189,6 +2558,129 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stale_rows, 0, "stale root leaves no change row");
+    }
+
+    #[test]
+    fn verified_history_and_working_diff_remain_realm_scoped() {
+        let (mut repository, genesis, project, signing_key) = signed_repository();
+        assert!(matches!(
+            repository.history(Realm::Public, 0),
+            Err(StoreError::InvalidRead(_))
+        ));
+        assert!(matches!(
+            repository.history(Realm::Public, 1_001),
+            Err(StoreError::InvalidRead(_))
+        ));
+        let public_preview = repository.working_diff(Realm::Public).unwrap();
+        assert_eq!(public_preview.len(), 1);
+        assert_eq!(public_preview[0].kind, super::DiffKind::Added);
+        assert_eq!(public_preview[0].path, "file.txt");
+        assert!(!public_preview[0].path.contains("members"));
+
+        let public_id = commit_realm(
+            &mut repository,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "public message",
+        );
+        let members_id = commit_realm(
+            &mut repository,
+            &signing_key,
+            Realm::Members,
+            "2026-08-24T00:00:03Z",
+            "restricted message",
+        );
+        let public_history = repository.history(Realm::Public, 20).unwrap();
+        assert_eq!(public_history.len(), 1);
+        assert_eq!(public_history[0].id, public_id);
+        assert_eq!(public_history[0].message, "public message");
+        assert_ne!(public_history[0].id, members_id);
+        assert!(repository.working_diff(Realm::Public).unwrap().is_empty());
+        assert!(repository.working_diff(Realm::Members).unwrap().is_empty());
+
+        let replacement = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[
+                SnapshotInput {
+                    path: "file.txt".into(),
+                    realm: Realm::Public,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"changed".to_vec(),
+                        executable: false,
+                    },
+                },
+                SnapshotInput {
+                    path: "script.sh".into(),
+                    realm: Realm::Public,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"#!/bin/sh\n".to_vec(),
+                        executable: true,
+                    },
+                },
+                SnapshotInput {
+                    path: "members.txt".into(),
+                    realm: Realm::Members,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"restricted".to_vec(),
+                        executable: false,
+                    },
+                },
+            ],
+        )
+        .unwrap();
+        repository
+            .replace_working_snapshots(&replacement, "2026-08-24T00:00:04Z")
+            .unwrap();
+        let public_diff = repository.working_diff(Realm::Public).unwrap();
+        assert_eq!(public_diff.len(), 2);
+        assert_eq!(public_diff[0].kind, super::DiffKind::Modified);
+        assert_eq!(public_diff[0].path, "file.txt");
+        assert_eq!(public_diff[1].kind, super::DiffKind::Added);
+        assert_eq!(public_diff[1].path, "script.sh");
+        assert_eq!(public_diff[1].after, Some(TreeEntryMode::Executable));
+        assert!(repository.working_diff(Realm::Members).unwrap().is_empty());
+
+        let second_id = commit_realm(
+            &mut repository,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:05Z",
+            "second public",
+        );
+        let newest = repository.history(Realm::Public, 1).unwrap();
+        assert_eq!(newest[0].id, second_id);
+        assert_eq!(newest[0].parent.as_deref(), Some(public_id.as_str()));
+    }
+
+    #[test]
+    fn read_model_rejects_a_corrupt_accepted_signature() {
+        let (mut repository, _, _, signing_key) = signed_repository();
+        let head = commit_realm(
+            &mut repository,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "signed",
+        );
+        let head_digest = parse_artifact_id(&head).unwrap();
+        repository
+            .connection
+            .execute(
+                "UPDATE signatures SET canonical_record = X'00' WHERE artifact_id = ?1",
+                params![head_digest.as_slice()],
+            )
+            .unwrap();
+        assert!(matches!(
+            repository.history(Realm::Public, 20),
+            Err(StoreError::Corrupt(_))
+        ));
+        assert!(matches!(
+            repository.working_diff(Realm::Public),
+            Err(StoreError::Corrupt(_))
+        ));
     }
 
     #[test]

@@ -346,6 +346,99 @@ fn output_value(output: &Output, prefix: &str) -> String {
         .to_owned()
 }
 
+struct CheckpointFixture {
+    directory: TestDirectory,
+    _key_directory: TestDirectory,
+    public_head: String,
+    members_head: String,
+    second_public_head: String,
+}
+
+impl CheckpointFixture {
+    fn new() -> Self {
+        let directory = TestDirectory::new();
+        let key_directory = TestDirectory::new();
+        let key_path = key_directory.as_ref().join("owner.seed");
+        let generated = ef(&["keygen", "--output", key_path.to_str().unwrap()]);
+        assert!(generated.status.success(), "{}", stderr(&generated));
+        let actor_key = output_value(&generated, "actor-key: ");
+        assert_eq!(actor_key.len(), 64);
+        assert_eq!(
+            output_value(&generated, "signing-key-file: "),
+            fs::canonicalize(&key_path).unwrap().to_string_lossy()
+        );
+        assert_eq!(stdout(&generated).lines().count(), 2);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&key_path).unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+
+        let root = directory.as_ref().to_str().unwrap();
+        let initialized = ef(&[
+            "init",
+            "--name",
+            "Checkpoints",
+            "--actor-key",
+            &actor_key,
+            "--path",
+            root,
+        ]);
+        assert!(initialized.status.success(), "{}", stderr(&initialized));
+        fs::write(directory.as_ref().join("public.txt"), "public\n").unwrap();
+        fs::write(directory.as_ref().join("members.txt"), "members\n").unwrap();
+        assert!(
+            ef(&["track", "--path", root, "public.txt"])
+                .status
+                .success()
+        );
+        assert!(
+            ef(&["track", "--path", root, "--realm", "members", "members.txt"])
+                .status
+                .success()
+        );
+        assert!(ef(&["snapshot", "--path", root]).status.success());
+        let checkpoint = |realm: &str, message: &str| {
+            let output = ef(&[
+                "checkpoint",
+                "--path",
+                root,
+                "--realm",
+                realm,
+                "-m",
+                message,
+                "--signing-key-file",
+                key_path.to_str().unwrap(),
+            ]);
+            assert!(output.status.success(), "{}", stderr(&output));
+            output
+        };
+        let public = checkpoint("public", "public message");
+        let public_head = output_value(&public, "checkpoint-public: ");
+        assert!(stdout(&public).contains("generation: 1\n"));
+        let members = checkpoint("members", "members-only message");
+        let members_head = output_value(&members, "checkpoint-members: ");
+        assert!(stdout(&members).contains("generation: 1\n"));
+        let second_public = checkpoint("public", "second\npublic\tmessage\u{1b}");
+        let second_public_head = output_value(&second_public, "checkpoint-public: ");
+        assert!(stdout(&second_public).contains("generation: 2\n"));
+        Self {
+            directory,
+            _key_directory: key_directory,
+            public_head,
+            members_head,
+            second_public_head,
+        }
+    }
+
+    fn root(&self) -> &str {
+        self.directory.as_ref().to_str().unwrap()
+    }
+}
+
 #[test]
 fn snapshots_realm_roots_without_cross_realm_churn() {
     let directory = TestDirectory::new();
@@ -393,108 +486,86 @@ fn snapshots_realm_roots_without_cross_realm_churn() {
 
 #[test]
 fn generates_a_protected_key_and_checkpoints_realms_independently() {
-    let directory = TestDirectory::new();
-    let key_directory = TestDirectory::new();
-    let key_path = key_directory.as_ref().join("owner.seed");
-    let generated = ef(&["keygen", "--output", key_path.to_str().unwrap()]);
-    assert!(generated.status.success(), "{}", stderr(&generated));
-    let actor_key = output_value(&generated, "actor-key: ");
-    assert_eq!(actor_key.len(), 64);
-    assert_eq!(
-        output_value(&generated, "signing-key-file: "),
-        fs::canonicalize(&key_path).unwrap().to_string_lossy()
-    );
-    assert_eq!(stdout(&generated).lines().count(), 2);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            fs::metadata(&key_path).unwrap().permissions().mode() & 0o077,
-            0
-        );
-    }
-
-    let root = directory.as_ref().to_str().unwrap();
-    let initialized = ef(&[
-        "init",
-        "--name",
-        "Checkpoints",
-        "--actor-key",
-        &actor_key,
-        "--path",
-        root,
-    ]);
-    assert!(initialized.status.success(), "{}", stderr(&initialized));
-    fs::write(directory.as_ref().join("public.txt"), "public\n").unwrap();
-    fs::write(directory.as_ref().join("members.txt"), "members\n").unwrap();
-    assert!(
-        ef(&["track", "--path", root, "public.txt"])
-            .status
-            .success()
-    );
-    assert!(
-        ef(&["track", "--path", root, "--realm", "members", "members.txt",])
-            .status
-            .success()
-    );
-    let snapshot = ef(&["snapshot", "--path", root]);
-    assert!(snapshot.status.success(), "{}", stderr(&snapshot));
-
-    let public = ef(&[
-        "checkpoint",
-        "--path",
-        root,
-        "--realm",
-        "public",
-        "-m",
-        "public message",
-        "--signing-key-file",
-        key_path.to_str().unwrap(),
-    ]);
-    assert!(public.status.success(), "{}", stderr(&public));
-    let public_head = output_value(&public, "checkpoint-public: ");
-    assert!(stdout(&public).contains("generation: 1\n"));
-
-    let members = ef(&[
-        "checkpoint",
-        "--path",
-        root,
-        "--realm",
-        "members",
-        "-m",
-        "members-only message",
-        "--signing-key-file",
-        key_path.to_str().unwrap(),
-    ]);
-    assert!(members.status.success(), "{}", stderr(&members));
-    let members_head = output_value(&members, "checkpoint-members: ");
-    assert_ne!(members_head, public_head);
-    assert!(stdout(&members).contains("generation: 1\n"));
-
-    let second_public = ef(&[
-        "checkpoint",
-        "--path",
-        root,
-        "--realm",
-        "public",
-        "-m",
-        "second public message",
-        "--signing-key-file",
-        key_path.to_str().unwrap(),
-    ]);
-    assert!(second_public.status.success(), "{}", stderr(&second_public));
-    let second_public_head = output_value(&second_public, "checkpoint-public: ");
-    assert_ne!(second_public_head, public_head);
-    assert!(stdout(&second_public).contains("generation: 2\n"));
-
+    let fixture = CheckpointFixture::new();
+    assert_ne!(fixture.members_head, fixture.public_head);
+    assert_ne!(fixture.second_public_head, fixture.public_head);
+    let root = fixture.root();
     let status = ef(&["status", "--path", root]);
     assert!(status.status.success(), "{}", stderr(&status));
     let status = stdout(&status);
-    assert!(status.contains(&format!("checkpoint-head-public: {second_public_head}\n")));
+    assert!(status.contains(&format!(
+        "checkpoint-head-public: {}\n",
+        fixture.second_public_head
+    )));
     assert!(status.contains("checkpoint-generation-public: 2\n"));
-    assert!(status.contains(&format!("checkpoint-head-members: {members_head}\n")));
+    assert!(status.contains(&format!(
+        "checkpoint-head-members: {}\n",
+        fixture.members_head
+    )));
     assert!(status.contains("checkpoint-generation-members: 1\n"));
     assert!(status.contains("checkpoint-head-local: -\n"));
+}
+
+#[test]
+fn reads_history_and_working_diff_without_cross_realm_output() {
+    let fixture = CheckpointFixture::new();
+    let root = fixture.root();
+    let public_history = ef(&[
+        "history", "--path", root, "--realm", "public", "--limit", "1",
+    ]);
+    assert!(
+        public_history.status.success(),
+        "{}",
+        stderr(&public_history)
+    );
+    let public_history = stdout(&public_history);
+    assert!(public_history.contains("realm: public\n"));
+    assert!(public_history.contains("entries: 1\n"));
+    assert!(public_history.contains(&format!("change: {}\n", fixture.second_public_head)));
+    assert!(public_history.contains("message: second\\npublic\\tmessage\\u{1b}\n"));
+    assert!(!public_history.contains("members-only"));
+    assert!(!public_history.contains(&fixture.members_head));
+
+    let members_history = ef(&["history", "--path", root, "--realm", "members"]);
+    assert!(
+        members_history.status.success(),
+        "{}",
+        stderr(&members_history)
+    );
+    let members_history = stdout(&members_history);
+    assert!(members_history.contains("message: members-only message\n"));
+    assert!(!members_history.contains("public message"));
+
+    let clean = ef(&["diff", "--path", root, "--realm", "public"]);
+    assert!(clean.status.success(), "{}", stderr(&clean));
+    assert!(stdout(&clean).contains("changes: 0\n"));
+
+    fs::write(
+        fixture.directory.as_ref().join("public.txt"),
+        "public changed\n",
+    )
+    .unwrap();
+    fs::write(
+        fixture.directory.as_ref().join("members.txt"),
+        "members changed\n",
+    )
+    .unwrap();
+    let snapshot = ef(&["snapshot", "--path", root]);
+    assert!(snapshot.status.success(), "{}", stderr(&snapshot));
+    let public_diff = ef(&["diff", "--path", root, "--realm", "public"]);
+    assert!(public_diff.status.success(), "{}", stderr(&public_diff));
+    let public_diff = stdout(&public_diff);
+    assert!(public_diff.contains("changes: 1\n"));
+    assert!(public_diff.contains("M\tfile\tpublic.txt\n"));
+    assert!(!public_diff.contains("members.txt"));
+    assert!(!public_diff.contains("members-only"));
+
+    let members_diff = ef(&["diff", "--path", root, "--realm", "members"]);
+    assert!(members_diff.status.success(), "{}", stderr(&members_diff));
+    let members_diff = stdout(&members_diff);
+    assert!(members_diff.contains("changes: 1\n"));
+    assert!(members_diff.contains("M\tfile\tmembers.txt\n"));
+    assert!(!members_diff.contains("public.txt"));
 }
 
 #[test]
