@@ -1,0 +1,104 @@
+{
+  "format": "edgefossil-cloud-resources-v0",
+  "deployment": "edgefoss",
+  "environments": {
+    "staging": {
+      "worker": {
+        "name": "edgefoss-staging"
+      },
+      "dataPolicy": {
+        "r2Location": "automatic",
+        "r2Jurisdiction": null,
+        "durableObjectJurisdiction": null,
+        "durableObjectLocationHint": "apac-ne"
+      },
+      "durableObject": {
+        "binding": "REPOSITORY",
+        "className": "RepositoryDO",
+        "export": {
+          "type": "durable-object",
+          "state": "created",
+          "storage": "sqlite"
+        }
+      },
+      "r2Buckets": [
+        {
+          "binding": "PUBLIC_BLOBS",
+          "name": "edgefoss-staging-public-blobs",
+          "publicAccess": false
+        },
+        {
+          "binding": "RESTRICTED_BLOBS",
+          "name": "edgefoss-staging-restricted-blobs",
+          "publicAccess": false
+        },
+        {
+          "binding": "EXPORTS",
+          "name": "edgefoss-staging-exports",
+          "publicAccess": false
+        }
+      ],
+      "queue": {
+        "binding": "EVENTS",
+        "name": "edgefoss-staging-events",
+        "consumer": {
+          "maxBatchSize": 10,
+          "maxBatchTimeoutSeconds": 5,
+          "maxRetries": 3
+        },
+        "deadLetterQueue": {
+          "name": "edgefoss-staging-events-dlq"
+        }
+      }
+    },
+    "production": {
+      "worker": {
+        "name": "edgefoss-production"
+      },
+      "dataPolicy": {
+        "r2Location": "automatic",
+        "r2Jurisdiction": null,
+        "durableObjectJurisdiction": null,
+        "durableObjectLocationHint": "apac-ne"
+      },
+      "durableObject": {
+        "binding": "REPOSITORY",
+        "className": "RepositoryDO",
+        "export": {
+          "type": "durable-object",
+          "state": "created",
+          "storage": "sqlite"
+        }
+      },
+      "r2Buckets": [
+        {
+          "binding": "PUBLIC_BLOBS",
+          "name": "edgefoss-production-public-blobs",
+          "publicAccess": false
+        },
+        {
+          "binding": "RESTRICTED_BLOBS",
+          "name": "edgefoss-production-restricted-blobs",
+          "publicAccess": false
+        },
+        {
+          "binding": "EXPORTS",
+          "name": "edgefoss-production-exports",
+          "publicAccess": false
+        }
+      ],
+      "queue": {
+        "binding": "EVENTS",
+        "name": "edgefoss-production-events",
+        "consumer": {
+          "maxBatchSize": 10,
+          "maxBatchTimeoutSeconds": 5,
+          "maxRetries": 3
+        },
+        "deadLetterQueue": {
+          "name": "edgefoss-production-events-dlq"
+        }
+      }
+    }
+  }
+}

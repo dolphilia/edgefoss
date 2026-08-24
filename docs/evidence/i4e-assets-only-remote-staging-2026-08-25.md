@@ -2,11 +2,12 @@
 
 - Increment: I4e, P3 first assets-only remote staging deploy
 - Base commit: `0f3cf4b8dcbc7b108b90b6f2ec6654487aad3d1e`
-- Source state: local working tree; commit and CI confirmation pending
+- Source state: committed as `63f57c349cdc99e6bbcbd4d1b15f9c9e022a12db`
 - User checkpoint: U1 complete before any deployment mutation
 - Toolchain: Wrangler `4.125.0`, Node.js `24.19.0`, Rust `1.94.1`
 - Result: staging deploy, exhaustive remote byte audit, full workspace
-  verification, and build pass; commit and CI confirmation pending
+  verification, build pass, and GitHub Actions success confirmed by the account
+  owner
 
 ## Deployment record
 

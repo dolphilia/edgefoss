@@ -1,6 +1,7 @@
 # Cloud resource naming
 
-Status: P0 baseline; no remote resources have been created.
+Status: P4a0 reviewed manifest baseline; no stateful remote resources have been
+created.
 
 ## Pattern
 
@@ -29,7 +30,9 @@ Planned staging examples:
 ## Rules
 
 - Names always include the environment; preview/local code must never bind production resources.
-- Bucket and Queue names are created only from the reviewed P4 resource manifest.
+- [`infra/cloud-resources.json`](../../infra/cloud-resources.json) is the P4
+  source of truth for Worker, Durable Object, bucket, and Queue intent.
+- Bucket and Queue names are created only from that reviewed manifest.
 - Physical IDs remain in deployment configuration and never enter portable artifacts.
 - Rename/delete/transfer is a lifecycle operation requiring a verified backup and manual approval.
 - Do not embed account IDs, email addresses, realm names, or secrets in resource names.

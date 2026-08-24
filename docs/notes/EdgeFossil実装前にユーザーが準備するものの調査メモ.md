@@ -436,15 +436,23 @@ userが行うこと:
 5. projectが用意するcommandを実行する。
 6. list/info commandで作成結果を確認する。
 
-計画するcommand interface:
+command interface:
 
 ```bash
-pnpm cloud:plan --env staging
-pnpm cloud:provision --env staging
-pnpm cloud:verify --env staging
+pnpm run cloud:plan -- --env staging
+# U2承認後、実装済みと案内された時だけ次の二つを実行する
+pnpm run cloud:provision -- --env staging
+pnpm run cloud:verify -- --env staging
 ```
 
-これらは現時点ではまだ実装されていない。P4開始前に実装し、実際のresource名と安全確認をcommand側へ組み込む。
+`cloud:plan`はP4a0で実装済みであり、local manifestだけを読み、Cloudflareへ
+read/writeを行わない。`cloud:provision`と`cloud:verify`はまだ実装されて
+いないため、U2承認前には実行を促さない。planの
+`preflight.status`が`USER_ACTION_REQUIRED`、`checkpoint`が`U2`、
+`provisioningCommandAvailable`が`false`であることを確認する。
+
+planが表示する`manifestDigest`は承認対象を固定する。resource名や配置方針を
+変更するとdigestも変わるため、変更後は再reviewする。
 
 作成後のWrangler確認例:
 
