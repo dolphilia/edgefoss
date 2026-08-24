@@ -2,9 +2,9 @@
 
 - Increment: I2b, tree/change executable specification
 - Base commit: `a97dfe428c0874dc3b9ac94a6ddf6cb17bd6c77a`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `f973cc38202e34bb6402be6a7763b75f3129e55b`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: targeted checks pass; full repository check recorded below
+- Result: pass; account owner confirmed GitHub Actions CI success
 
 ## Demonstrated slice
 

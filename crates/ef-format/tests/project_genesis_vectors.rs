@@ -63,6 +63,12 @@ fn error_name(code: FormatErrorCode) -> &'static str {
         FormatErrorCode::InvalidSchema => "invalid_schema",
         FormatErrorCode::InvalidArtifactId => "invalid_artifact_id",
         FormatErrorCode::PathCollision => "path_collision",
+        FormatErrorCode::CrossProjectReference => "cross_project_reference",
+        FormatErrorCode::ParentRealmMismatch => "parent_realm_mismatch",
+        FormatErrorCode::RealmFlowDenied => "realm_flow_denied",
+        FormatErrorCode::UnknownRequiredSemantics => "unknown_required_semantics",
+        FormatErrorCode::InvalidLogicalClock => "invalid_logical_clock",
+        FormatErrorCode::InvalidSignature => "invalid_signature",
     }
 }
 

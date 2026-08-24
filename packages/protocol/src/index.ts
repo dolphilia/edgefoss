@@ -31,3 +31,16 @@ export {
   type Realm,
   type ReferenceClass,
 } from "./realm.js";
+export {
+  validateChangeGraph,
+  type GraphArtifactKind,
+  type GraphArtifactSummary,
+  type GraphResolver,
+} from "./graph.js";
+export {
+  artifactSignatureMessage,
+  decodeSignatureRecord,
+  encodeSignatureRecord,
+  verifyArtifactSignature,
+  type SignatureRecord,
+} from "./signature.js";

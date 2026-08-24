@@ -5,11 +5,18 @@ use std::{error::Error, fmt};
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
+mod graph;
 mod path;
 mod realm;
+mod signature;
 
+pub use graph::{GraphArtifactKind, GraphArtifactSummary, validate_change_graph};
 pub use path::{PathError, PathErrorCode, validate_path};
 pub use realm::{ParseRealmError, Realm, ReferenceClass, can_reference};
+pub use signature::{
+    SignatureRecord, artifact_signature_message, decode_signature_record, encode_signature_record,
+    verify_artifact_signature,
+};
 
 /// Maximum encoded size of an artifact body in v0.
 pub const MAX_ARTIFACT_BYTES: usize = 1024 * 1024;
@@ -26,6 +33,12 @@ pub enum FormatErrorCode {
     InvalidSchema,
     InvalidArtifactId,
     PathCollision,
+    CrossProjectReference,
+    ParentRealmMismatch,
+    RealmFlowDenied,
+    UnknownRequiredSemantics,
+    InvalidLogicalClock,
+    InvalidSignature,
 }
 
 /// A rejected encoded value or artifact.

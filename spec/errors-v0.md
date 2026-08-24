@@ -28,7 +28,7 @@ The path validator uses `empty_path`, `path_too_long`, `non_nfc`,
 `trailing_dot_or_space`, and `windows_reserved_name`. Their precedence and
 meaning are normative in [`path-v0.md`](path-v0.md).
 
-## Graph codes reserved for I2
+## Graph and signature codes
 
 | code                         | meaning                                             |
 | ---------------------------- | --------------------------------------------------- |

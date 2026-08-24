@@ -21,7 +21,13 @@ export type FormatErrorCode =
   | "resource_limit"
   | "invalid_schema"
   | "invalid_artifact_id"
-  | "path_collision";
+  | "path_collision"
+  | "cross_project_reference"
+  | "parent_realm_mismatch"
+  | "realm_flow_denied"
+  | "unknown_required_semantics"
+  | "invalid_logical_clock"
+  | "invalid_signature";
 
 export class FormatError extends Error {
   constructor(

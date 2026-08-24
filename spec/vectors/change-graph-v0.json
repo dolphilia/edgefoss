@@ -1,0 +1,221 @@
+{
+  "profile": "edgefossil-change-graph-v0",
+  "project": "sha256:78ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e",
+  "other_project": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "root_id": "sha256:5539e9a3b15288c68fc792a15d443fe9ce3ed3056634839255b2d359573cd7ff",
+  "parent_id": "sha256:82b53cad39e27537df70607d6be6b870affae453691eea93673ff02dae954f4d",
+  "actor_key_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "other_actor_key_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+  "cases": [
+    {
+      "name": "public-root-public",
+      "change_realm": "public",
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "allowed": true
+    },
+    {
+      "name": "members-root-public",
+      "change_realm": "members",
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "allowed": true
+    },
+    {
+      "name": "members-root-members",
+      "change_realm": "members",
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "members",
+        "kind": "tree"
+      },
+      "allowed": true
+    },
+    {
+      "name": "missing-root",
+      "change_realm": "public",
+      "root": {
+        "present": false,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "error": "unknown_required_semantics"
+    },
+    {
+      "name": "root-wrong-kind",
+      "change_realm": "public",
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "change"
+      },
+      "error": "unknown_required_semantics"
+    },
+    {
+      "name": "root-cross-project",
+      "change_realm": "public",
+      "root": {
+        "present": true,
+        "project": "other",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "error": "cross_project_reference"
+    },
+    {
+      "name": "public-root-members",
+      "change_realm": "public",
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "members",
+        "kind": "tree"
+      },
+      "error": "realm_flow_denied"
+    },
+    {
+      "name": "valid-same-actor-parent",
+      "change_realm": "public",
+      "clock": 2,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "same",
+        "realm": "public",
+        "kind": "change",
+        "actor": "same",
+        "clock": 1
+      },
+      "allowed": true
+    },
+    {
+      "name": "different-actor-clock-independent",
+      "change_realm": "public",
+      "clock": 0,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "same",
+        "realm": "public",
+        "kind": "change",
+        "actor": "other",
+        "clock": 99
+      },
+      "allowed": true
+    },
+    {
+      "name": "parent-realm-mismatch",
+      "change_realm": "public",
+      "clock": 2,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "same",
+        "realm": "members",
+        "kind": "change",
+        "actor": "same",
+        "clock": 1
+      },
+      "error": "parent_realm_mismatch"
+    },
+    {
+      "name": "members-parent-public-is-not-ancestry",
+      "change_realm": "members",
+      "clock": 2,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "same",
+        "realm": "public",
+        "kind": "change",
+        "actor": "same",
+        "clock": 1
+      },
+      "error": "parent_realm_mismatch"
+    },
+    {
+      "name": "parent-cross-project",
+      "change_realm": "public",
+      "clock": 2,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "other",
+        "realm": "public",
+        "kind": "change",
+        "actor": "same",
+        "clock": 1
+      },
+      "error": "cross_project_reference"
+    },
+    {
+      "name": "parent-wrong-kind",
+      "change_realm": "public",
+      "clock": 2,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "same",
+        "realm": "public",
+        "kind": "tree",
+        "actor": "same",
+        "clock": 1
+      },
+      "error": "unknown_required_semantics"
+    },
+    {
+      "name": "same-actor-clock-not-advanced",
+      "change_realm": "public",
+      "clock": 1,
+      "root": {
+        "present": true,
+        "project": "same",
+        "realm": "public",
+        "kind": "tree"
+      },
+      "parent": {
+        "project": "same",
+        "realm": "public",
+        "kind": "change",
+        "actor": "same",
+        "clock": 1
+      },
+      "error": "invalid_logical_clock"
+    }
+  ]
+}

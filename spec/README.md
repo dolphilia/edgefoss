@@ -15,7 +15,9 @@ Read the documents in this order:
 4. [`realm-v0.md`](realm-v0.md)
 5. [`policy-v0.md`](policy-v0.md)
 6. [`errors-v0.md`](errors-v0.md)
-7. [`semantic-root-v0.md`](semantic-root-v0.md)
+7. [`graph-v0.md`](graph-v0.md)
+8. [`signature-v0.md`](signature-v0.md)
+9. [`semantic-root-v0.md`](semantic-root-v0.md)
 
 Machine-readable valid and invalid examples live in [`vectors/`](vectors/).
 Rust and TypeScript implementations MUST consume the same files rather than
