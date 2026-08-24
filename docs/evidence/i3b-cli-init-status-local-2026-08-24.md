@@ -1,11 +1,10 @@
 # I3b CLI init/status evidence — 2026-08-24
 
 - Increment: I3b, usable local `ef init` and `ef status`
-- Base commit: `a0146be181e808064ff90d111832eac7d4327fd6`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `c4b6115b267d600f9fce262e4d3bd17411f7366b`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
 - OS randomness adapter: `getrandom 0.4.3`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: pass; account owner confirmed GitHub Actions success
 
 ## Demonstrated slice
 

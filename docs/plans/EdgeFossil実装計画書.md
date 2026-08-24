@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2fとI3aはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、I3aのSQLite基盤に続き、I3bとしてCLI `ef init` / `ef status`を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2f、I3a、I3bはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、I3aのSQLite基盤とI3bのCLI `ef init` / `ef status`に続き、I3cとしてworking-copy tracking intent、`ef track`、`ef status --explain`を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-24）: I3aの`ef-store-sqlite`、番号付きmigration、WAL/FULL/foreign-key接続policy、冪等project genesis init/reopenはcommit/CI済み。I3bでは、OS乱数nonceと所有者公開鍵からproject genesisを作る`ef init`、上位directoryを探索してidentity/schema/integrityを再検証する`ef status`を実装した。local full check/buildを通してcommit/CI確認待ちとし、その後はtracking stateを保存する次の小incrementへ進む。秘密鍵の生成・保存・署名はそのwrite pathと一緒に後続incrementで扱い、I3bのrepositoryには秘密情報を置かない。
+実行状況（2026-08-24）: I3aのSQLite基盤とI3bの`ef init` / `ef status`はcommit/CI済み。I3cではschema migration v2でdevice-localなworking-copy tracking intentを追加し、`ef track`で`none/local/project`とproject時の`public/members`を保存し、`ef status --explain`でexact-first・longest-prefixの実効結果を説明できるようにした。これはportable policy artifactでもsnapshotでもなく、file contentをまだ読み込まない。local full check/buildを通してcommit/CI確認待ちとし、その後はtracked pathからblob/treeを構築するsnapshot incrementへ進む。秘密鍵の生成・保存・署名はcheckpointのsigned write pathと一緒に扱う。
 
 成果物:
 

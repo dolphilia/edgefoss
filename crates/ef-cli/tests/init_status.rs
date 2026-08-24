@@ -39,6 +39,18 @@ fn ef(arguments: &[&str]) -> Output {
         .unwrap()
 }
 
+fn initialize(directory: &TestDirectory, name: &str) -> Output {
+    ef(&[
+        "init",
+        "--name",
+        name,
+        "--actor-key",
+        ACTOR_KEY,
+        "--path",
+        directory.as_ref().to_str().unwrap(),
+    ])
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8(output.stdout.clone()).unwrap()
 }
@@ -97,7 +109,7 @@ fn initializes_repository_and_reports_status() {
     let status = stdout(&status);
     assert!(status.contains(&format!("project: {project_id}\n")));
     assert!(status.contains("name: Example\n"));
-    assert!(status.contains("schema: 1\n"));
+    assert!(status.contains("schema: 2\n"));
     assert!(status.contains("integrity: ok\n"));
 }
 
@@ -224,4 +236,104 @@ fn metadata_symbolic_link_is_rejected() {
     assert!(!output.status.success());
     assert!(stderr(&output).contains("must not be a symbolic link"));
     assert!(!redirected.as_ref().join("repository.sqlite3").exists());
+}
+
+#[test]
+fn tracks_directory_and_explains_inherited_public_rule() {
+    let directory = TestDirectory::new();
+    let initialized = initialize(&directory, "Tracking");
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    fs::create_dir(directory.as_ref().join("src")).unwrap();
+    fs::write(directory.as_ref().join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
+
+    let tracked = ef(&[
+        "track",
+        "--path",
+        directory.as_ref().to_str().unwrap(),
+        "src/",
+    ]);
+    assert!(tracked.status.success(), "{}", stderr(&tracked));
+    assert!(stdout(&tracked).contains("selector: prefix src\n"));
+    assert!(stdout(&tracked).contains("tracking: project\n"));
+    assert!(stdout(&tracked).contains("realm: public\n"));
+
+    let status = ef(&[
+        "status",
+        "--path",
+        directory.as_ref().to_str().unwrap(),
+        "--explain",
+        "src/lib.rs",
+    ]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let status = stdout(&status);
+    assert!(status.contains("tracking-project: 1\n"));
+    assert!(status.contains("effective-tracking: project\n"));
+    assert!(status.contains("effective-realm: public\n"));
+    assert!(status.contains("matched-rule: prefix src\n"));
+}
+
+#[test]
+fn persists_project_local_and_none_destinations() {
+    let directory = TestDirectory::new();
+    let initialized = initialize(&directory, "Destinations");
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    fs::create_dir_all(directory.as_ref().join("ops")).unwrap();
+    fs::create_dir_all(directory.as_ref().join("notes")).unwrap();
+    fs::write(directory.as_ref().join("ops/runbook.md"), "restricted\n").unwrap();
+    fs::write(directory.as_ref().join("notes/private.md"), "local\n").unwrap();
+    fs::write(directory.as_ref().join("generated.txt"), "ignored\n").unwrap();
+
+    for (options, expected) in [
+        (
+            vec!["--realm", "members", "ops/runbook.md"],
+            "realm: members\n",
+        ),
+        (vec!["--local", "notes/private.md"], "realm: local\n"),
+        (vec!["--none", "generated.txt"], "realm: -\n"),
+    ] {
+        let mut arguments = vec!["track", "--path", directory.as_ref().to_str().unwrap()];
+        arguments.extend(options);
+        let tracked = ef(&arguments);
+        assert!(tracked.status.success(), "{}", stderr(&tracked));
+        assert!(stdout(&tracked).contains(expected));
+    }
+
+    let status = ef(&["status", "--path", directory.as_ref().to_str().unwrap()]);
+    let status = stdout(&status);
+    assert!(status.contains("tracking-project: 1\n"));
+    assert!(status.contains("tracking-local: 1\n"));
+    assert!(status.contains("tracking-none: 1\n"));
+}
+
+#[test]
+fn rejects_conflicting_tracking_destinations_and_metadata_target() {
+    let directory = TestDirectory::new();
+    let initialized = initialize(&directory, "Rejected");
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    fs::write(directory.as_ref().join("file.txt"), "content\n").unwrap();
+    let root = directory.as_ref().to_str().unwrap();
+
+    let conflict = ef(&[
+        "track", "--path", root, "--local", "--realm", "members", "file.txt",
+    ]);
+    assert!(!conflict.status.success());
+    assert!(stderr(&conflict).contains("conflicts with another tracking destination"));
+
+    let metadata = ef(&["track", "--path", root, ".edgefossil"]);
+    assert!(!metadata.status.success());
+    assert!(stderr(&metadata).contains("repository metadata cannot be tracked"));
+
+    let traversal = ef(&["track", "--path", root, "../file.txt"]);
+    assert!(!traversal.status.success());
+    assert!(stderr(&traversal).contains("must not contain parent"));
+
+    let absolute = ef(&["track", "--path", root, root]);
+    assert!(!absolute.status.success());
+    assert!(stderr(&absolute).contains("TARGET must be relative"));
+
+    let status = ef(&["status", "--path", root]);
+    let status = stdout(&status);
+    assert!(status.contains("tracking-project: 0\n"));
+    assert!(status.contains("tracking-local: 0\n"));
+    assert!(status.contains("tracking-none: 0\n"));
 }

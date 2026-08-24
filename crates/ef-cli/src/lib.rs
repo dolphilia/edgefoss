@@ -2,15 +2,15 @@
 
 use std::{
     error::Error,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt, fs,
     fs::OpenOptions,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use ef_format::{ProjectGenesis, encode_project_genesis};
-use ef_store_sqlite::LocalRepository;
+use ef_format::{ProjectGenesis, Realm, encode_project_genesis, validate_path};
+use ef_store_sqlite::{LocalRepository, TrackingMode, TrackingRule, TrackingScope};
 
 const METADATA_DIRECTORY: &str = ".edgefossil";
 const DATABASE_FILE: &str = "repository.sqlite3";
@@ -18,7 +18,8 @@ const HELP: &str = "EdgeFossil local repository CLI
 
 Usage:
   ef init --name <NAME> --actor-key <64 LOWERCASE HEX> [--path <DIRECTORY>]
-  ef status [--path <DIRECTORY>]
+  ef track [--local | --none | --realm <public|members>] [--path <DIRECTORY>] <TARGET>
+  ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
 
@@ -59,6 +60,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
 
     match command.to_str() {
         Some("init") => run_init(parse_init(arguments)?),
+        Some("track") => run_track(&parse_track(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -85,6 +87,20 @@ struct InitOptions {
 
 struct StatusOptions {
     path: PathBuf,
+    explain: Option<OsString>,
+}
+
+struct TrackOptions {
+    path: PathBuf,
+    target: OsString,
+    selection: TrackSelection,
+}
+
+#[derive(Clone, Copy)]
+enum TrackSelection {
+    None,
+    Local,
+    Project(Realm),
 }
 
 fn parse_init(arguments: impl Iterator<Item = OsString>) -> Result<InitOptions, CliError> {
@@ -124,6 +140,7 @@ fn parse_init(arguments: impl Iterator<Item = OsString>) -> Result<InitOptions, 
 
 fn parse_status(arguments: impl Iterator<Item = OsString>) -> Result<StatusOptions, CliError> {
     let mut path = None;
+    let mut explain = None;
     let mut arguments = arguments.peekable();
     while let Some(option) = arguments.next() {
         match option.to_str() {
@@ -132,13 +149,77 @@ fn parse_status(arguments: impl Iterator<Item = OsString>) -> Result<StatusOptio
                 PathBuf::from(parse_value(&mut arguments, "--path")?),
                 "--path",
             )?,
+            Some("--explain") => set_once(
+                &mut explain,
+                parse_value(&mut arguments, "--explain")?,
+                "--explain",
+            )?,
             Some(other) => return Err(CliError::new(format!("unknown status option `{other}`"))),
             None => return Err(CliError::new("status option must be valid UTF-8")),
         }
     }
     Ok(StatusOptions {
         path: path.unwrap_or_else(|| PathBuf::from(".")),
+        explain,
     })
+}
+
+fn parse_track(arguments: impl Iterator<Item = OsString>) -> Result<TrackOptions, CliError> {
+    let mut path = None;
+    let mut target = None;
+    let mut selection = None;
+    let mut arguments = arguments.peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some("--local") => {
+                set_tracking_selection(&mut selection, TrackSelection::Local, "--local")?;
+            }
+            Some("--none") => {
+                set_tracking_selection(&mut selection, TrackSelection::None, "--none")?;
+            }
+            Some("--realm") => {
+                let realm = parse_project_realm(&parse_utf8_value(&mut arguments, "--realm")?)?;
+                set_tracking_selection(&mut selection, TrackSelection::Project(realm), "--realm")?;
+            }
+            Some(value) if value.starts_with('-') => {
+                return Err(CliError::new(format!("unknown track option `{value}`")));
+            }
+            _ => set_once(&mut target, argument, "TARGET")?,
+        }
+    }
+    Ok(TrackOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
+        target: target.ok_or_else(|| CliError::new("missing required TARGET"))?,
+        selection: selection.unwrap_or(TrackSelection::Project(Realm::Public)),
+    })
+}
+
+fn set_tracking_selection(
+    selection: &mut Option<TrackSelection>,
+    value: TrackSelection,
+    option: &str,
+) -> Result<(), CliError> {
+    if selection.replace(value).is_some() {
+        return Err(CliError::new(format!(
+            "{option} conflicts with another tracking destination"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_project_realm(value: &str) -> Result<Realm, CliError> {
+    match value {
+        "public" => Ok(Realm::Public),
+        "members" => Ok(Realm::Members),
+        _ => Err(CliError::new(
+            "--realm must be `public` or `members`; use --local for local history",
+        )),
+    }
 }
 
 fn parse_value(
@@ -281,12 +362,140 @@ fn run_status(options: &StatusOptions) -> Result<(), CliError> {
     let schema_version = repository
         .schema_version()
         .map_err(|error| CliError::new(error.to_string()))?;
+    let tracking_counts = repository
+        .tracking_counts()
+        .map_err(|error| CliError::new(error.to_string()))?;
 
     println!("repository: {}", root.display());
     println!("project: {project_id}");
     println!("name: {}", genesis.name);
     println!("schema: {schema_version}");
     println!("integrity: ok");
+    println!("tracking-project: {}", tracking_counts.project);
+    println!("tracking-local: {}", tracking_counts.local);
+    println!("tracking-none: {}", tracking_counts.none);
+    if let Some(target) = &options.explain {
+        let (selector, _) = repository_selector(&root, &start, target)?;
+        let rule = repository
+            .resolve_tracking(&selector)
+            .map_err(|error| CliError::new(error.to_string()))?;
+        print_tracking_explanation(&selector, rule.as_ref());
+    }
+    Ok(())
+}
+
+fn run_track(options: &TrackOptions) -> Result<(), CliError> {
+    let start = canonical_directory(&options.path)?;
+    let root = find_repository_root(&start)?.ok_or_else(|| {
+        CliError::new(format!(
+            "no EdgeFossil repository found from {}",
+            start.display()
+        ))
+    })?;
+    let (selector, disk_path) = repository_selector(&root, &start, &options.target)?;
+    let metadata = fs::symlink_metadata(&disk_path)
+        .map_err(|error| CliError::new(format!("cannot track {}: {error}", disk_path.display())))?;
+    let scope = if metadata.is_dir() {
+        TrackingScope::Prefix
+    } else {
+        TrackingScope::Path
+    };
+    let (mode, realm) = match options.selection {
+        TrackSelection::None => (TrackingMode::None, None),
+        TrackSelection::Local => (TrackingMode::Local, Some(Realm::Local)),
+        TrackSelection::Project(realm) => (TrackingMode::Project, Some(realm)),
+    };
+    let rule = TrackingRule::new(selector, scope, mode, realm)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    let database_path = root.join(METADATA_DIRECTORY).join(DATABASE_FILE);
+    let mut repository = open_repository(&database_path)?;
+    repository
+        .set_tracking_rule(&rule)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    println!("selector: {} {}", rule.scope().as_str(), rule.selector());
+    println!("tracking: {}", rule.mode().as_str());
+    println!("realm: {}", rule.realm().map_or("-", Realm::as_str));
+    Ok(())
+}
+
+fn print_tracking_explanation(path: &str, rule: Option<&TrackingRule>) {
+    println!("explain-path: {path}");
+    if let Some(rule) = rule {
+        println!("effective-tracking: {}", rule.mode().as_str());
+        println!(
+            "effective-realm: {}",
+            rule.realm().map_or("-", Realm::as_str)
+        );
+        println!(
+            "matched-rule: {} {}",
+            rule.scope().as_str(),
+            rule.selector()
+        );
+    } else {
+        println!("effective-tracking: none");
+        println!("effective-realm: -");
+        println!("matched-rule: default");
+    }
+}
+
+fn repository_selector(
+    root: &Path,
+    start: &Path,
+    target: &OsStr,
+) -> Result<(String, PathBuf), CliError> {
+    let target = Path::new(target);
+    if target.is_absolute() {
+        return Err(CliError::new(
+            "TARGET must be relative to the selected directory",
+        ));
+    }
+    let relative_start = start
+        .strip_prefix(root)
+        .map_err(|_| CliError::new("selected directory is outside the discovered repository"))?;
+    let mut segments = Vec::new();
+    append_portable_segments(&mut segments, relative_start)?;
+    append_portable_segments(&mut segments, target)?;
+    if segments.is_empty() {
+        return Err(CliError::new(
+            "the repository root cannot be a tracking selector in this increment",
+        ));
+    }
+    if segments
+        .first()
+        .is_some_and(|segment| segment == METADATA_DIRECTORY)
+    {
+        return Err(CliError::new(
+            "EdgeFossil repository metadata cannot be tracked",
+        ));
+    }
+    let selector = segments.join("/");
+    validate_path(&selector)
+        .map_err(|error| CliError::new(format!("invalid repository path: {error}")))?;
+    let disk_path = segments
+        .iter()
+        .fold(root.to_path_buf(), |path, segment| path.join(segment));
+    Ok((selector, disk_path))
+}
+
+fn append_portable_segments(segments: &mut Vec<String>, path: &Path) -> Result<(), CliError> {
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(segment) => segments.push(
+                segment
+                    .to_str()
+                    .ok_or_else(|| CliError::new("TARGET must be valid UTF-8"))?
+                    .to_owned(),
+            ),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return Err(CliError::new(
+                    "TARGET must not contain parent or absolute path components",
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

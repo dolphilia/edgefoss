@@ -36,9 +36,25 @@ cargo run -p ef-cli --bin ef -- status --path /path/to/project
 
 Initialization creates only `.edgefossil/repository.sqlite3`. Set
 `ACTOR_PUBLIC_KEY_HEX` to your 64-character lowercase public-key encoding before
-running the example. `status` may run
-from any descendant directory. Commands for key creation, signing, tracking,
-and snapshots are not implemented yet.
+running the example. `status` may run from any descendant directory.
+
+Working-copy tracking intent can then be recorded without reading or storing
+file content:
+
+```bash
+cargo run -p ef-cli --bin ef -- track --path /path/to/project src/
+cargo run -p ef-cli --bin ef -- track --path /path/to/project \
+  --realm members ops/runbook.md
+cargo run -p ef-cli --bin ef -- track --path /path/to/project \
+  --local notes/private.md
+cargo run -p ef-cli --bin ef -- status --path /path/to/project \
+  --explain ops/runbook.md
+```
+
+The default destination is `project/public`; `--realm members`, `--local`, and
+`--none` are mutually exclusive. Tracking state is device-local staging intent,
+not yet a portable policy artifact or a snapshot. Commands for key creation,
+signing, snapshots, and export/import are not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.
