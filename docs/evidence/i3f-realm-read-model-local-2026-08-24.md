@@ -2,9 +2,9 @@
 
 - Increment: I3f, verified realm history and structural working diff
 - Base commit: `4ad5c780437dd0e1b6a931b10297e70259f71746`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `991f3a4fcb91c852ec50fe28079a97681db35654`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: local pass; commit, push, and GitHub Actions CI confirmed by the user
 
 ## Demonstrated slice
 

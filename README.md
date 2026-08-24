@@ -61,6 +61,9 @@ cargo run -p ef-cli --bin ef -- checkpoint --path /path/to/project \
   --signing-key-file /safe/path/outside/project/owner.seed
 cargo run -p ef-cli --bin ef -- history --path /path/to/project \
   --realm public --limit 20
+cargo run -p ef-cli --bin ef -- export --path /path/to/project \
+  --realm public --output /safe/export/path/public.edge
+cargo run -p ef-cli --bin ef -- verify /safe/export/path/public.edge
 ```
 
 The default destination is `project/public`; `--realm members`, `--local`, and
@@ -71,8 +74,12 @@ working roots. `checkpoint` signs and advances exactly one realm's `heads/main`
 ref atomically; use a public-safe message for the public realm. `diff` compares
 the latest snapshot with that realm's accepted head using structural
 name/status output, and `history` walks only that realm's verified checkpoint
-chain. Content hunks, historical-change diff, and export/import commands are
-not implemented yet.
+chain. `export` writes the complete accepted public graph as an experimental
+unpacked `bundle-v0` directory; `verify` checks it offline without the source
+database or Cloudflare. The output path must not already exist. I3g deliberately
+supports only `--realm public`; members/local export needs verified lower-realm
+base bundles and remains pending. Content hunks, historical-change diff, and
+bundle import are not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.

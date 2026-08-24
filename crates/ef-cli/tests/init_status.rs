@@ -569,6 +569,77 @@ fn reads_history_and_working_diff_without_cross_realm_output() {
 }
 
 #[test]
+fn exports_and_offline_verifies_a_public_bundle_without_restricted_leakage() {
+    let fixture = CheckpointFixture::new();
+    fs::write(
+        fixture.directory.as_ref().join("public.txt"),
+        "unsigned-working-marker\n",
+    )
+    .unwrap();
+    let snapshot = ef(&["snapshot", "--path", fixture.root()]);
+    assert!(snapshot.status.success(), "{}", stderr(&snapshot));
+    let output_directory = TestDirectory::new();
+    let bundle = output_directory.as_ref().join("public.edge");
+    let exported = ef(&[
+        "export",
+        "--path",
+        fixture.root(),
+        "--realm",
+        "public",
+        "--output",
+        bundle.to_str().unwrap(),
+    ]);
+    assert!(exported.status.success(), "{}", stderr(&exported));
+    let exported_stdout = stdout(&exported);
+    assert!(exported_stdout.contains("realm: public\n"));
+    assert!(exported_stdout.contains("semantic-root: sha256:"));
+    assert!(bundle.join("manifest.cbor").is_file());
+
+    let verified = ef(&["verify", bundle.to_str().unwrap()]);
+    assert!(verified.status.success(), "{}", stderr(&verified));
+    let verified_stdout = stdout(&verified);
+    assert!(verified_stdout.contains("verification: ok\n"));
+    assert!(verified_stdout.contains("realm: public\n"));
+    assert!(!verified_stdout.contains("members-only"));
+    assert!(!verified_stdout.contains(&fixture.members_head));
+
+    for kind in ["artifacts", "blobs", "signatures"] {
+        for entry in fs::read_dir(bundle.join(kind)).unwrap() {
+            let body = fs::read(entry.unwrap().path()).unwrap();
+            assert!(!String::from_utf8_lossy(&body).contains("members-only"));
+            assert!(!String::from_utf8_lossy(&body).contains("unsigned-working-marker"));
+        }
+    }
+
+    let blob = fs::read_dir(bundle.join("blobs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut body = fs::read(&blob).unwrap();
+    body[0] ^= 1;
+    fs::write(&blob, body).unwrap();
+    let rejected = ef(&["verify", bundle.to_str().unwrap()]);
+    assert!(!rejected.status.success());
+    assert!(stderr(&rejected).contains("bundle object mismatch"));
+
+    let members_bundle = output_directory.as_ref().join("members.edge");
+    let members = ef(&[
+        "export",
+        "--path",
+        fixture.root(),
+        "--realm",
+        "members",
+        "--output",
+        members_bundle.to_str().unwrap(),
+    ]);
+    assert!(!members.status.success());
+    assert!(stderr(&members).contains("require verified base bundles"));
+    assert!(!members_bundle.exists());
+}
+
+#[test]
 fn rejects_wrong_or_repository_local_signing_keys_without_advancing_head() {
     let directory = TestDirectory::new();
     let key_directory = TestDirectory::new();

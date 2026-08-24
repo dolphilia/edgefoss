@@ -9,11 +9,14 @@ use std::{
 
 use edgefoss_core::BuiltRealmSnapshot;
 use ef_format::{
-    ArtifactMeta, ChangeArtifact, FormatError, GraphArtifactKind, GraphArtifactSummary, PathError,
-    ProjectGenesis, Realm, SignatureRecord, TreeEntryMode, artifact_id, decode_change,
-    decode_project_genesis, decode_signature_record, decode_tree, encode_change,
+    ArtifactMeta, BundleManifest, ChangeArtifact, FormatError, GraphArtifactKind,
+    GraphArtifactSummary, PathError, ProjectGenesis, Realm, SemanticArtifact, SemanticRef,
+    SemanticRootInput, SignatureRecord, TreeArtifact, TreeEntryMode, artifact_id,
+    compute_semantic_root, decode_bundle_manifest, decode_change, decode_project_genesis,
+    decode_signature_record, decode_tree, encode_bundle_manifest, encode_change,
     encode_project_genesis, encode_signature_record, encode_tree, parse_artifact_id,
     validate_change_graph, validate_path, verify_artifact_id, verify_artifact_signature,
+    verify_bundle_manifest, verify_bundle_objects,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -38,6 +41,7 @@ pub enum StoreError {
     InvalidSnapshot(String),
     InvalidCheckpoint(String),
     InvalidRead(String),
+    InvalidBundle(String),
     RefConflict(String),
     Corrupt(String),
 }
@@ -56,6 +60,7 @@ impl fmt::Display for StoreError {
             Self::InvalidSnapshot(message) => write!(formatter, "invalid snapshot: {message}"),
             Self::InvalidCheckpoint(message) => write!(formatter, "invalid checkpoint: {message}"),
             Self::InvalidRead(message) => write!(formatter, "invalid read request: {message}"),
+            Self::InvalidBundle(message) => write!(formatter, "invalid bundle: {message}"),
             Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
@@ -74,6 +79,7 @@ impl Error for StoreError {
             | Self::InvalidSnapshot(_)
             | Self::InvalidCheckpoint(_)
             | Self::InvalidRead(_)
+            | Self::InvalidBundle(_)
             | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }
@@ -296,6 +302,26 @@ pub struct DiffEntry {
     pub path: String,
     pub before: Option<TreeEntryMode>,
     pub after: Option<TreeEntryMode>,
+}
+
+/// One unpacked, deterministic realm bundle ready for filesystem transport.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortableBundle {
+    pub manifest: BundleManifest,
+    pub manifest_bytes: Vec<u8>,
+    pub objects: BTreeMap<String, Vec<u8>>,
+}
+
+/// Summary returned after provider-independent bundle verification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedBundle {
+    pub project: String,
+    pub realm: Realm,
+    pub semantic_root: String,
+    pub artifacts: usize,
+    pub blobs: usize,
+    pub signatures: usize,
+    pub refs: usize,
 }
 
 /// One open local repository database.
@@ -940,6 +966,28 @@ impl LocalRepository {
         diff_tree_entries(&accepted, &working)
     }
 
+    /// Exports the complete accepted public graph as an experimental bundle.
+    ///
+    /// Unsigned working snapshots and every non-public row are excluded. The
+    /// `SQLite` read transaction gives the manifest and objects one coherent
+    /// accepted-head view.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing public checkpoint, corrupt accepted
+    /// graph/signature data, or a storage/format failure.
+    pub fn export_public_bundle(&mut self) -> Result<PortableBundle, StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let project = ef_format::format_artifact_id(&project_id);
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let bundle = build_public_bundle(&transaction, &project_id, &project, &genesis)?;
+        transaction.commit()?;
+        Ok(bundle)
+    }
+
     /// Atomically stores a signed change and advances the realm checkpoint ref.
     ///
     /// The operation rechecks both the unsigned working root and ref generation
@@ -1029,6 +1077,486 @@ impl LocalRepository {
             })
             .transpose()
     }
+}
+
+fn bundle_object_path(kind: &str, id: &str) -> String {
+    let extension = if kind == "blobs" { "bin" } else { "cbor" };
+    format!("{kind}/{}.{extension}", &id[7..])
+}
+
+fn build_public_bundle(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+) -> Result<PortableBundle, StoreError> {
+    let (head, _) =
+        query_ref(connection, project_id, Realm::Public, CHECKPOINT_REF)?.ok_or_else(|| {
+            StoreError::InvalidRead(
+                "public has no accepted checkpoint; run ef checkpoint first".into(),
+            )
+        })?;
+    let mut artifacts = BTreeMap::new();
+    let mut blobs = BTreeMap::new();
+    let mut signatures = BTreeMap::new();
+    let (_, _, _, genesis_body) = load_artifact_row(connection, project_id, project)?;
+    artifacts.insert(project.to_owned(), genesis_body);
+    collect_signature(
+        connection,
+        project_id,
+        project,
+        &genesis.actor_key,
+        &mut signatures,
+    )?;
+    collect_public_history(
+        connection,
+        project_id,
+        project,
+        genesis,
+        &head,
+        &mut artifacts,
+        &mut blobs,
+        &mut signatures,
+    )?;
+    assemble_public_bundle(project, head, artifacts, blobs, signatures)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_public_history(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+    head: &str,
+    artifacts: &mut BTreeMap<String, Vec<u8>>,
+    blobs: &mut BTreeMap<String, Vec<u8>>,
+    signatures: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    let mut next = Some(head.to_owned());
+    let mut seen = HashSet::new();
+    while let Some(id) = next.take() {
+        if !seen.insert(id.clone()) {
+            return Err(StoreError::Corrupt(
+                "public checkpoint history contains a parent cycle".into(),
+            ));
+        }
+        let change =
+            load_verified_change(connection, project_id, project, genesis, Realm::Public, &id)?;
+        if change.meta.parents.len() > 1 {
+            return Err(StoreError::InvalidRead(
+                "merge export is not supported by the I3g linear exporter".into(),
+            ));
+        }
+        artifacts.insert(
+            id.clone(),
+            load_artifact_row(connection, project_id, &id)?.3,
+        );
+        collect_signature(connection, project_id, &id, &genesis.actor_key, signatures)?;
+        collect_export_tree(
+            connection,
+            project_id,
+            project,
+            genesis,
+            &change.root,
+            artifacts,
+            blobs,
+            signatures,
+        )?;
+        next = change.meta.parents.first().cloned();
+    }
+    Ok(())
+}
+
+fn assemble_public_bundle(
+    project: &str,
+    head: String,
+    artifacts: BTreeMap<String, Vec<u8>>,
+    blobs: BTreeMap<String, Vec<u8>>,
+    signatures: BTreeMap<String, Vec<u8>>,
+) -> Result<PortableBundle, StoreError> {
+    let artifact_ids = artifacts.keys().cloned().collect::<Vec<_>>();
+    let refs: Vec<(String, String)> = vec![(CHECKPOINT_REF.into(), head)];
+    let semantic_root = compute_semantic_root(&SemanticRootInput {
+        project: project.to_owned(),
+        realm: Realm::Public,
+        artifacts: artifact_ids
+            .iter()
+            .cloned()
+            .map(|id| SemanticArtifact {
+                id,
+                realm: Realm::Public,
+            })
+            .collect(),
+        refs: refs
+            .iter()
+            .map(|(name, target)| SemanticRef {
+                name: name.clone(),
+                target: target.clone(),
+                realm: Realm::Public,
+            })
+            .collect(),
+        policy_version: 0,
+    })?
+    .semantic_root;
+    let manifest = BundleManifest {
+        project: project.to_owned(),
+        realm: Realm::Public,
+        policy_version: 0,
+        semantic_root,
+        artifacts: artifact_ids,
+        blobs: blobs.keys().cloned().collect(),
+        signatures: signatures.keys().cloned().collect(),
+        refs,
+        base_roots: Vec::new(),
+    };
+    let manifest_bytes = encode_bundle_manifest(&manifest)?;
+    let mut objects = BTreeMap::new();
+    for (kind, values) in [
+        ("artifacts", artifacts),
+        ("blobs", blobs),
+        ("signatures", signatures),
+    ] {
+        for (id, body) in values {
+            objects.insert(bundle_object_path(kind, &id), body);
+        }
+    }
+    verify_portable_bundle(&manifest_bytes, &objects)?;
+    Ok(PortableBundle {
+        manifest,
+        manifest_bytes,
+        objects,
+    })
+}
+
+fn collect_signature(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    artifact: &str,
+    actor_key: &[u8; 32],
+    signatures: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    let (id, body) = load_verified_signature(connection, project_id, artifact, actor_key)?;
+    signatures.insert(id, body);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_export_tree(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+    root: &str,
+    artifacts: &mut BTreeMap<String, Vec<u8>>,
+    blobs: &mut BTreeMap<String, Vec<u8>>,
+    signatures: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    let mut pending = vec![root.to_owned()];
+    while let Some(id) = pending.pop() {
+        if artifacts.contains_key(&id) {
+            continue;
+        }
+        let tree = load_tree(
+            connection,
+            project_id,
+            project,
+            genesis.actor_key,
+            Realm::Public,
+            &id,
+        )?;
+        let (_, _, _, body) = load_artifact_row(connection, project_id, &id)?;
+        collect_signature(connection, project_id, &id, &genesis.actor_key, signatures)?;
+        artifacts.insert(id, body);
+        for entry in tree.entries {
+            match entry.mode {
+                TreeEntryMode::Directory => pending.push(entry.target),
+                TreeEntryMode::File | TreeEntryMode::Executable => {
+                    let digest = parse_artifact_id(&entry.target)?;
+                    let body = connection
+                        .query_row(
+                            "SELECT content FROM blobs
+                             WHERE project_id = ?1 AND realm = 'public' AND digest = ?2",
+                            params![project_id.as_slice(), digest.as_slice()],
+                            |row| row.get::<_, Vec<u8>>(0),
+                        )
+                        .optional()?
+                        .ok_or_else(|| {
+                            StoreError::Corrupt(
+                                "accepted public tree references a missing blob".into(),
+                            )
+                        })?;
+                    verify_artifact_id(&body, &entry.target)?;
+                    blobs.insert(entry.target, body);
+                }
+                TreeEntryMode::Symlink => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Verifies a public bundle without consulting `SQLite` or Cloudflare.
+///
+/// # Errors
+///
+/// Rejects non-public I3g bundles, container mismatches, unknown or unreachable
+/// objects, invalid graph edges, and missing/invalid artifact signatures.
+pub fn verify_portable_bundle(
+    manifest_bytes: &[u8],
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<VerifiedBundle, StoreError> {
+    let manifest = decode_bundle_manifest(manifest_bytes)?;
+    verify_bundle_manifest(&manifest)?;
+    verify_bundle_objects(&manifest, objects)?;
+    if manifest.realm != Realm::Public || !manifest.base_roots.is_empty() {
+        return Err(StoreError::InvalidBundle(
+            "I3g verifier accepts only a standalone public realm bundle".into(),
+        ));
+    }
+    if manifest.refs.len() != 1 || manifest.refs[0].0 != CHECKPOINT_REF {
+        return Err(StoreError::InvalidBundle(
+            "public bundle must contain exactly the heads/main ref".into(),
+        ));
+    }
+
+    let artifact_ids = manifest.artifacts.iter().cloned().collect::<BTreeSet<_>>();
+    let blob_ids = manifest.blobs.iter().cloned().collect::<BTreeSet<_>>();
+    let decoded = decode_public_bundle_artifacts(&manifest, objects)?;
+    verify_public_bundle_signatures(
+        &manifest,
+        objects,
+        &artifact_ids,
+        &decoded.genesis,
+        &decoded.trees,
+        &decoded.changes,
+    )?;
+    verify_public_bundle_graph(&manifest, &artifact_ids, &blob_ids, &decoded)?;
+    Ok(VerifiedBundle {
+        project: manifest.project,
+        realm: manifest.realm,
+        semantic_root: manifest.semantic_root,
+        artifacts: manifest.artifacts.len(),
+        blobs: manifest.blobs.len(),
+        signatures: manifest.signatures.len(),
+        refs: manifest.refs.len(),
+    })
+}
+
+struct DecodedPublicBundle {
+    genesis: ProjectGenesis,
+    trees: BTreeMap<String, TreeArtifact>,
+    changes: BTreeMap<String, ChangeArtifact>,
+}
+
+fn verify_public_bundle_graph(
+    manifest: &BundleManifest,
+    artifact_ids: &BTreeSet<String>,
+    blob_ids: &BTreeSet<String>,
+    decoded: &DecodedPublicBundle,
+) -> Result<(), StoreError> {
+    let mut reachable_artifacts = BTreeSet::from([manifest.project.clone()]);
+    let mut reachable_blobs = BTreeSet::new();
+    let mut pending_changes = vec![manifest.refs[0].1.clone()];
+    let mut expected_clock = None;
+    while let Some(id) = pending_changes.pop() {
+        if !reachable_artifacts.insert(id.clone()) {
+            return Err(StoreError::InvalidBundle(
+                "change ancestry contains a cycle".into(),
+            ));
+        }
+        let change = decoded.changes.get(&id).ok_or_else(|| {
+            StoreError::InvalidBundle("heads/main reaches a non-change artifact".into())
+        })?;
+        if change.meta.actor_key != decoded.genesis.actor_key || change.meta.parents.len() > 1 {
+            return Err(StoreError::InvalidBundle(
+                "change actor or linear ancestry is invalid".into(),
+            ));
+        }
+        if expected_clock.is_some_and(|clock| change.meta.logical_clock != clock) {
+            return Err(StoreError::InvalidBundle(
+                "change logical clock is not contiguous".into(),
+            ));
+        }
+        expected_clock = change.meta.logical_clock.checked_sub(1);
+        let mut summaries = BTreeMap::new();
+        let root = decoded
+            .trees
+            .get(&change.root)
+            .ok_or_else(|| StoreError::InvalidBundle("change root is not a bundled tree".into()))?;
+        summaries.insert(
+            change.root.clone(),
+            GraphArtifactSummary {
+                project: root.meta.project.clone(),
+                realm: root.meta.realm,
+                kind: GraphArtifactKind::Tree,
+                actor_key: root.meta.actor_key,
+                logical_clock: root.meta.logical_clock,
+            },
+        );
+        if let Some(parent) = change.meta.parents.first() {
+            let parent_change = decoded
+                .changes
+                .get(parent)
+                .ok_or_else(|| StoreError::InvalidBundle("change parent is not bundled".into()))?;
+            summaries.insert(
+                parent.clone(),
+                GraphArtifactSummary {
+                    project: parent_change.meta.project.clone(),
+                    realm: parent_change.meta.realm,
+                    kind: GraphArtifactKind::Change,
+                    actor_key: parent_change.meta.actor_key,
+                    logical_clock: parent_change.meta.logical_clock,
+                },
+            );
+            pending_changes.push(parent.clone());
+        } else if change.meta.logical_clock != 0 {
+            return Err(StoreError::InvalidBundle(
+                "first change logical clock must be zero".into(),
+            ));
+        }
+        validate_change_graph(change, |candidate| summaries.get(candidate).cloned())
+            .map_err(|_| StoreError::InvalidBundle("change graph is invalid".into()))?;
+        collect_verified_bundle_tree(
+            &change.root,
+            &decoded.trees,
+            blob_ids,
+            &decoded.genesis,
+            &mut reachable_artifacts,
+            &mut reachable_blobs,
+        )?;
+    }
+    if &reachable_artifacts != artifact_ids || &reachable_blobs != blob_ids {
+        return Err(StoreError::InvalidBundle(
+            "bundle inventory is not the exact accepted reachable graph".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn decode_public_bundle_artifacts(
+    manifest: &BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<DecodedPublicBundle, StoreError> {
+    let genesis_body = objects
+        .get(&bundle_object_path("artifacts", &manifest.project))
+        .ok_or_else(|| StoreError::InvalidBundle("project genesis is missing".into()))?;
+    let genesis = decode_project_genesis(genesis_body)
+        .map_err(|_| StoreError::InvalidBundle("project genesis is invalid".into()))?;
+    let mut trees = BTreeMap::new();
+    let mut changes = BTreeMap::new();
+    for id in &manifest.artifacts {
+        if id == &manifest.project {
+            continue;
+        }
+        let body = &objects[&bundle_object_path("artifacts", id)];
+        if let Ok(tree) = decode_tree(body) {
+            if tree.meta.project != manifest.project || tree.meta.realm != Realm::Public {
+                return Err(StoreError::InvalidBundle(
+                    "tree project or realm does not match the manifest".into(),
+                ));
+            }
+            trees.insert(id.clone(), tree);
+        } else if let Ok(change) = decode_change(body) {
+            if change.meta.project != manifest.project || change.meta.realm != Realm::Public {
+                return Err(StoreError::InvalidBundle(
+                    "change project or realm does not match the manifest".into(),
+                ));
+            }
+            changes.insert(id.clone(), change);
+        } else {
+            return Err(StoreError::InvalidBundle(
+                "bundle contains an unsupported artifact kind".into(),
+            ));
+        }
+    }
+    Ok(DecodedPublicBundle {
+        genesis,
+        trees,
+        changes,
+    })
+}
+
+fn verify_public_bundle_signatures(
+    manifest: &BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+    artifact_ids: &BTreeSet<String>,
+    genesis: &ProjectGenesis,
+    trees: &BTreeMap<String, TreeArtifact>,
+    changes: &BTreeMap<String, ChangeArtifact>,
+) -> Result<(), StoreError> {
+    let mut signed = BTreeSet::new();
+    for id in &manifest.signatures {
+        let record = decode_signature_record(&objects[&bundle_object_path("signatures", id)])
+            .map_err(|_| StoreError::InvalidBundle("signature record is invalid".into()))?;
+        if !artifact_ids.contains(&record.artifact) {
+            return Err(StoreError::InvalidBundle(
+                "signature targets an artifact outside the bundle".into(),
+            ));
+        }
+        let actor_key = if record.artifact == manifest.project {
+            genesis.actor_key
+        } else if let Some(tree) = trees.get(&record.artifact) {
+            tree.meta.actor_key
+        } else if let Some(change) = changes.get(&record.artifact) {
+            change.meta.actor_key
+        } else {
+            return Err(StoreError::InvalidBundle(
+                "signature target cannot be decoded".into(),
+            ));
+        };
+        verify_artifact_signature(&record, &record.artifact, &actor_key)
+            .map_err(|_| StoreError::InvalidBundle("artifact signature is invalid".into()))?;
+        if !signed.insert(record.artifact) {
+            return Err(StoreError::InvalidBundle(
+                "artifact has more than one signature record".into(),
+            ));
+        }
+    }
+    if signed != *artifact_ids {
+        return Err(StoreError::InvalidBundle(
+            "every bundle artifact must have exactly one valid signature".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn collect_verified_bundle_tree(
+    root: &str,
+    trees: &BTreeMap<String, TreeArtifact>,
+    blob_ids: &BTreeSet<String>,
+    genesis: &ProjectGenesis,
+    artifacts: &mut BTreeSet<String>,
+    blobs: &mut BTreeSet<String>,
+) -> Result<(), StoreError> {
+    let mut pending = vec![root.to_owned()];
+    while let Some(id) = pending.pop() {
+        if !artifacts.insert(id.clone()) {
+            continue;
+        }
+        let tree = trees
+            .get(&id)
+            .ok_or_else(|| StoreError::InvalidBundle("tree target is missing".into()))?;
+        if tree.meta.actor_key != genesis.actor_key || tree.meta.logical_clock != 0 {
+            return Err(StoreError::InvalidBundle(
+                "tree actor or logical clock is invalid".into(),
+            ));
+        }
+        for entry in &tree.entries {
+            match entry.mode {
+                TreeEntryMode::Directory => pending.push(entry.target.clone()),
+                TreeEntryMode::File | TreeEntryMode::Executable => {
+                    if !blob_ids.contains(&entry.target) {
+                        return Err(StoreError::InvalidBundle(
+                            "tree references a blob outside the bundle".into(),
+                        ));
+                    }
+                    blobs.insert(entry.target.clone());
+                }
+                TreeEntryMode::Symlink => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ValidatedCheckpoint {
@@ -1415,6 +1943,15 @@ fn verify_stored_signature(
     artifact: &str,
     actor_key: &[u8; 32],
 ) -> Result<(), StoreError> {
+    load_verified_signature(connection, project_id, artifact, actor_key).map(|_| ())
+}
+
+fn load_verified_signature(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    artifact: &str,
+    actor_key: &[u8; 32],
+) -> Result<(String, Vec<u8>), StoreError> {
     let artifact_digest = parse_artifact_id(artifact)?;
     let stored = connection
         .query_row(
@@ -1445,7 +1982,8 @@ fn verify_stored_signature(
     let record = decode_signature_record(&stored.2)
         .map_err(|_| StoreError::Corrupt("stored artifact signature is invalid".into()))?;
     verify_artifact_signature(&record, artifact, actor_key)
-        .map_err(|_| StoreError::Corrupt("stored artifact signature is invalid".into()))
+        .map_err(|_| StoreError::Corrupt("stored artifact signature is invalid".into()))?;
+    Ok((ef_format::format_artifact_id(&storage_digest), stored.2))
 }
 
 fn load_verified_change(
@@ -2680,6 +3218,51 @@ mod tests {
         assert!(matches!(
             repository.working_diff(Realm::Public),
             Err(StoreError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn exports_and_independently_verifies_only_the_accepted_public_graph() {
+        let (mut repository, _, _, signing_key) = signed_repository();
+        commit_realm(
+            &mut repository,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "public export message",
+        );
+        commit_realm(
+            &mut repository,
+            &signing_key,
+            Realm::Members,
+            "2026-08-24T00:00:03Z",
+            "members-private-marker",
+        );
+
+        let bundle = repository.export_public_bundle().unwrap();
+        assert_eq!(bundle.manifest.realm, Realm::Public);
+        assert!(bundle.manifest.base_roots.is_empty());
+        assert_eq!(bundle.manifest.refs.len(), 1);
+        let verified =
+            super::verify_portable_bundle(&bundle.manifest_bytes, &bundle.objects).unwrap();
+        assert_eq!(verified.semantic_root, bundle.manifest.semantic_root);
+        assert_eq!(verified.artifacts, bundle.manifest.artifacts.len());
+        assert!(bundle.objects.values().all(|body| {
+            !body
+                .windows(b"members-private-marker".len())
+                .any(|window| window == b"members-private-marker")
+        }));
+
+        let mut corrupt = bundle.objects;
+        let blob_path = corrupt
+            .keys()
+            .find(|path| path.starts_with("blobs/"))
+            .unwrap()
+            .clone();
+        corrupt.get_mut(&blob_path).unwrap()[0] ^= 1;
+        assert!(matches!(
+            super::verify_portable_bundle(&bundle.manifest_bytes, &corrupt),
+            Err(StoreError::Format(_))
         ));
     }
 

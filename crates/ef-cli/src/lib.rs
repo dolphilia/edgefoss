@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     ffi::{OsStr, OsString},
     fmt, fs,
@@ -16,14 +16,20 @@ use ed25519_dalek::{Signer, SigningKey};
 use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
 use ef_format::{
     ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, TreeEntryMode,
-    artifact_id, artifact_signature_message, encode_change, encode_project_genesis, validate_path,
+    artifact_id, artifact_signature_message, decode_bundle_manifest, encode_change,
+    encode_project_genesis, validate_path,
 };
-use ef_store_sqlite::{DiffKind, LocalRepository, TrackingMode, TrackingRule, TrackingScope};
+use ef_store_sqlite::{
+    DiffKind, LocalRepository, TrackingMode, TrackingRule, TrackingScope, verify_portable_bundle,
+};
 use zeroize::Zeroizing;
 
 const METADATA_DIRECTORY: &str = ".edgefossil";
 const DATABASE_FILE: &str = "repository.sqlite3";
 const MAX_SNAPSHOT_BLOB_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_BUNDLE_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_BUNDLE_OBJECT_BYTES: u64 = 16 * 1024 * 1024;
+type BundleObjects = BTreeMap<String, Vec<u8>>;
 const HELP: &str = "EdgeFossil local repository CLI
 
 Usage:
@@ -34,6 +40,8 @@ Usage:
   ef checkpoint --realm <public|members|local> -m <MESSAGE> --signing-key-file <KEY_FILE> [--path <DIRECTORY>]
   ef history --realm <public|members|local> [--limit <1..1000>] [--path <DIRECTORY>]
   ef diff --realm <public|members|local> [--path <DIRECTORY>]
+  ef export --realm public --output <BUNDLE_DIRECTORY> [--path <DIRECTORY>]
+  ef verify <BUNDLE_DIRECTORY>
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
@@ -81,6 +89,8 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
         Some("checkpoint") => run_checkpoint(&parse_checkpoint(arguments)?),
         Some("history") => run_history(&parse_history(arguments)?),
         Some("diff") => run_diff(&parse_diff(arguments)?),
+        Some("export") => run_export(&parse_export(arguments)?),
+        Some("verify") => run_verify(&parse_verify(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -140,6 +150,16 @@ struct HistoryOptions {
 struct DiffOptions {
     path: PathBuf,
     realm: Realm,
+}
+
+struct ExportOptions {
+    path: PathBuf,
+    realm: Realm,
+    output: PathBuf,
+}
+
+struct VerifyOptions {
+    bundle: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -393,6 +413,49 @@ fn parse_diff(arguments: impl Iterator<Item = OsString>) -> Result<DiffOptions, 
     Ok(DiffOptions {
         path: path.unwrap_or_else(|| PathBuf::from(".")),
         realm: realm.ok_or_else(|| CliError::new("missing required option --realm"))?,
+    })
+}
+
+fn parse_export(arguments: impl Iterator<Item = OsString>) -> Result<ExportOptions, CliError> {
+    let mut path = None;
+    let mut realm = None;
+    let mut output = None;
+    let mut arguments = arguments.peekable();
+    while let Some(option) = arguments.next() {
+        match option.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some("--realm") => set_once(
+                &mut realm,
+                parse_checkpoint_realm(&parse_utf8_value(&mut arguments, "--realm")?)?,
+                "--realm",
+            )?,
+            Some("--output") => set_once(
+                &mut output,
+                PathBuf::from(parse_value(&mut arguments, "--output")?),
+                "--output",
+            )?,
+            Some(other) => return Err(CliError::new(format!("unknown export option `{other}`"))),
+            None => return Err(CliError::new("export option must be valid UTF-8")),
+        }
+    }
+    Ok(ExportOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
+        realm: realm.ok_or_else(|| CliError::new("missing required option --realm"))?,
+        output: output.ok_or_else(|| CliError::new("missing required option --output"))?,
+    })
+}
+
+fn parse_verify(mut arguments: impl Iterator<Item = OsString>) -> Result<VerifyOptions, CliError> {
+    let bundle = arguments
+        .next()
+        .ok_or_else(|| CliError::new("missing required BUNDLE_DIRECTORY"))?;
+    reject_trailing(arguments)?;
+    Ok(VerifyOptions {
+        bundle: PathBuf::from(bundle),
     })
 }
 
@@ -695,6 +758,259 @@ fn run_diff(options: &DiffOptions) -> Result<(), CliError> {
         println!("{status}\t{mode}\t{}", entry.path);
     }
     Ok(())
+}
+
+fn run_export(options: &ExportOptions) -> Result<(), CliError> {
+    if options.realm != Realm::Public {
+        return Err(CliError::new(
+            "I3g export supports only --realm public; members/local require verified base bundles",
+        ));
+    }
+    let start = canonical_directory(&options.path)?;
+    let root = find_repository_root(&start)?.ok_or_else(|| {
+        CliError::new(format!(
+            "no EdgeFossil repository found from {}",
+            start.display()
+        ))
+    })?;
+    let output = canonical_new_directory_path(&options.output)?;
+    reject_symlink_if_present(&output, "bundle output")?;
+    if output.exists() {
+        return Err(CliError::new(format!(
+            "bundle output already exists: {}",
+            output.display()
+        )));
+    }
+    let mut repository = open_repository(&root.join(METADATA_DIRECTORY).join(DATABASE_FILE))?;
+    let bundle = repository
+        .export_public_bundle()
+        .map_err(|error| CliError::new(error.to_string()))?;
+    write_bundle_atomically(&output, &bundle.manifest_bytes, &bundle.objects)?;
+    println!("bundle: {}", output.display());
+    println!("project: {}", bundle.manifest.project);
+    println!("realm: {}", bundle.manifest.realm.as_str());
+    println!("semantic-root: {}", bundle.manifest.semantic_root);
+    println!("artifacts: {}", bundle.manifest.artifacts.len());
+    println!("blobs: {}", bundle.manifest.blobs.len());
+    println!("signatures: {}", bundle.manifest.signatures.len());
+    Ok(())
+}
+
+fn run_verify(options: &VerifyOptions) -> Result<(), CliError> {
+    let root = canonical_bundle_directory(&options.bundle)?;
+    let (manifest, objects) = read_bundle_directory(&root)?;
+    let verified = verify_portable_bundle(&manifest, &objects)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    println!("bundle: {}", root.display());
+    println!("verification: ok");
+    println!("project: {}", verified.project);
+    println!("realm: {}", verified.realm.as_str());
+    println!("semantic-root: {}", verified.semantic_root);
+    println!("artifacts: {}", verified.artifacts);
+    println!("blobs: {}", verified.blobs);
+    println!("signatures: {}", verified.signatures);
+    println!("refs: {}", verified.refs);
+    Ok(())
+}
+
+fn canonical_new_directory_path(path: &Path) -> Result<PathBuf, CliError> {
+    let name = path
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| CliError::new("--output must name a bundle directory"))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(canonical_directory(parent)?.join(name))
+}
+
+fn canonical_bundle_directory(path: &Path) -> Result<PathBuf, CliError> {
+    reject_symlink_if_present(path, "bundle directory")?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| CliError::new(format!("cannot resolve {}: {error}", path.display())))?;
+    let metadata = fs::symlink_metadata(&canonical).map_err(|error| {
+        CliError::new(format!("cannot inspect {}: {error}", canonical.display()))
+    })?;
+    if !metadata.is_dir() {
+        return Err(CliError::new(format!(
+            "bundle path is not a directory: {}",
+            canonical.display()
+        )));
+    }
+    Ok(canonical)
+}
+
+fn read_bundle_directory(root: &Path) -> Result<(Vec<u8>, BundleObjects), CliError> {
+    let manifest = read_regular_file_limited(
+        &root.join("manifest.cbor"),
+        "bundle manifest",
+        MAX_BUNDLE_MANIFEST_BYTES,
+    )?;
+    let decoded = decode_bundle_manifest(&manifest)
+        .map_err(|error| CliError::new(format!("invalid bundle manifest: {error}")))?;
+    let mut expected_objects = BTreeSet::new();
+    for (kind, ids) in [
+        ("artifacts", &decoded.artifacts),
+        ("blobs", &decoded.blobs),
+        ("signatures", &decoded.signatures),
+    ] {
+        for id in ids {
+            expected_objects.insert(cli_bundle_object_path(kind, id));
+        }
+    }
+    let mut objects = BTreeMap::new();
+    let mut seen_directories = BTreeSet::new();
+    for entry in fs::read_dir(root)
+        .map_err(|error| CliError::new(format!("cannot read {}: {error}", root.display())))?
+    {
+        let entry = entry.map_err(|error| CliError::new(format!("cannot read bundle: {error}")))?;
+        let name = entry.file_name();
+        if name == OsStr::new("manifest.cbor") {
+            continue;
+        }
+        let kind = name
+            .to_str()
+            .ok_or_else(|| CliError::new("bundle entry name must be valid UTF-8"))?;
+        if !matches!(kind, "artifacts" | "blobs" | "signatures") {
+            return Err(CliError::new(format!("unexpected bundle entry: {kind}")));
+        }
+        seen_directories.insert(kind.to_owned());
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| {
+            CliError::new(format!(
+                "cannot inspect {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(CliError::new(format!("unexpected bundle entry: {kind}")));
+        }
+        for object in fs::read_dir(entry.path()).map_err(|error| {
+            CliError::new(format!("cannot read {}: {error}", entry.path().display()))
+        })? {
+            let object = object
+                .map_err(|error| CliError::new(format!("cannot read bundle object: {error}")))?;
+            let file_name = object
+                .file_name()
+                .into_string()
+                .map_err(|_| CliError::new("bundle object name must be valid UTF-8"))?;
+            let relative = format!("{kind}/{file_name}");
+            if !expected_objects.contains(&relative) {
+                return Err(CliError::new(format!(
+                    "unexpected bundle object: {relative}"
+                )));
+            }
+            let body = read_regular_file_limited(
+                &object.path(),
+                "bundle object",
+                MAX_BUNDLE_OBJECT_BYTES,
+            )?;
+            objects.insert(relative, body);
+        }
+    }
+    if seen_directories != BTreeSet::from(["artifacts".into(), "blobs".into(), "signatures".into()])
+    {
+        return Err(CliError::new(
+            "bundle must contain artifacts, blobs, and signatures directories",
+        ));
+    }
+    Ok((manifest, objects))
+}
+
+fn cli_bundle_object_path(kind: &str, id: &str) -> String {
+    let extension = if kind == "blobs" { "bin" } else { "cbor" };
+    format!("{kind}/{}.{extension}", &id[7..])
+}
+
+fn read_regular_file_limited(path: &Path, label: &str, limit: u64) -> Result<Vec<u8>, CliError> {
+    let before = fs::symlink_metadata(path)
+        .map_err(|error| CliError::new(format!("cannot inspect {}: {error}", path.display())))?;
+    if before.file_type().is_symlink() || !before.is_file() {
+        return Err(CliError::new(format!(
+            "{label} must be a regular file: {}",
+            path.display()
+        )));
+    }
+    if before.len() > limit {
+        return Err(CliError::new(format!("{label} exceeds the size limit")));
+    }
+    let mut file = File::open(path)
+        .map_err(|error| CliError::new(format!("cannot open {}: {error}", path.display())))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| CliError::new(format!("cannot inspect {}: {error}", path.display())))?;
+    if !same_file(&before, &opened) {
+        return Err(CliError::new(format!("{label} changed while opening")));
+    }
+    let mut body = Vec::new();
+    (&mut file)
+        .take(limit + 1)
+        .read_to_end(&mut body)
+        .map_err(|error| CliError::new(format!("cannot read {}: {error}", path.display())))?;
+    if body.len() as u64 > limit {
+        return Err(CliError::new(format!("{label} exceeds the size limit")));
+    }
+    Ok(body)
+}
+
+fn write_bundle_atomically(
+    output: &Path,
+    manifest: &[u8],
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), CliError> {
+    let parent = output
+        .parent()
+        .ok_or_else(|| CliError::new("invalid bundle output"))?;
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| CliError::new(format!("OS random source failed: {error}")))?;
+    let mut suffix = String::with_capacity(nonce.len() * 2);
+    for byte in nonce {
+        let _ = write!(suffix, "{byte:02x}");
+    }
+    let temporary = parent.join(format!(".edgefoss-export-{suffix}.tmp"));
+    fs::create_dir(&temporary).map_err(|error| {
+        CliError::new(format!("cannot create {}: {error}", temporary.display()))
+    })?;
+    let result = (|| -> Result<(), CliError> {
+        for kind in ["artifacts", "blobs", "signatures"] {
+            fs::create_dir(temporary.join(kind)).map_err(|error| {
+                CliError::new(format!("cannot create bundle directory: {error}"))
+            })?;
+        }
+        for (relative, body) in objects {
+            write_new_bundle_file(&temporary.join(relative), body)?;
+        }
+        write_new_bundle_file(&temporary.join("manifest.cbor"), manifest)?;
+        if output.exists() {
+            return Err(CliError::new(format!(
+                "bundle output already exists: {}",
+                output.display()
+            )));
+        }
+        fs::rename(&temporary, output)
+            .map_err(|error| CliError::new(format!("cannot publish {}: {error}", output.display())))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&temporary);
+    }
+    result
+}
+
+fn write_new_bundle_file(path: &Path, body: &[u8]) -> Result<(), CliError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| CliError::new(format!("cannot create {}: {error}", path.display())))?;
+    file.write_all(body)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| CliError::new(format!("cannot write {}: {error}", path.display())))
 }
 
 const fn tree_mode(mode: TreeEntryMode) -> &'static str {
