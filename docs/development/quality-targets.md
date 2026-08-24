@@ -1,6 +1,8 @@
 # Quality targets
 
-Status: P0 hypotheses. Correctness requirements are gates; performance and cost values remain measurement placeholders.
+Status: correctness gates are active. The first local baseline was observed at
+G2; performance and cost thresholds remain unset until more environments and
+runs are available.
 
 ## Non-negotiable correctness
 
@@ -23,3 +25,11 @@ Status: P0 hypotheses. Correctness requirements are gates; performance and cost 
 | per-project Cloudflare cost                     | P4 onward             | G9                         |
 
 Each baseline records fixture size, commit, environment, command, repetitions, percentiles, and raw result location. A guessed number must be labeled `hypothesis`, not `target`.
+
+## Observed local baseline
+
+I3k recorded release-command observations for 10,000 files and 102,105 SQLite
+artifacts. See the [human-readable evidence](../evidence/i3k-local-scale-baseline-2026-08-25.md)
+and [raw JSON](../evidence/data/i3k-local-baseline-g2-2026-08-25.json). These
+values are comparison baselines, not SLOs. In particular, the one-sample export
+measurements are observations rather than percentiles.

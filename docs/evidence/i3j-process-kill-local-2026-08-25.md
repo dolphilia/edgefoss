@@ -2,10 +2,10 @@
 
 - Increment: I3j, deterministic local SQLite crash-recovery harness
 - Base commit: `16a440de74c93b22b336e22083ea144bfe73649e`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `e437aa17905ca92331cb6ef0cb1e1400c2127d7b`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local implementation and full verification pass; commit and CI
-  confirmation pending
+- Result: local implementation and full verification pass; commit, push, and
+  GitHub Actions CI confirmed by the user
 
 ## Demonstrated slice
 

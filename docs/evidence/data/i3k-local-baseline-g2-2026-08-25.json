@@ -1,0 +1,124 @@
+{
+  "format": "edgefossil-local-baseline-v0",
+  "profile": "g2",
+  "source_commit": "e437aa17905ca92331cb6ef0cb1e1400c2127d7b",
+  "source_dirty": true,
+  "environment": {
+    "os": "Darwin 24.6.0 Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:29 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T6000",
+    "architecture": "aarch64",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "ef_binary": "/Users/dolphilia/github/edgefoss/target/release/ef"
+  },
+  "fixtures": [
+    {
+      "name": "files",
+      "files": 10000,
+      "artifacts": 104,
+      "realms": 1
+    },
+    {
+      "name": "artifacts",
+      "files": 0,
+      "artifacts": 102105,
+      "realms": 3
+    }
+  ],
+  "measurements": [
+    {
+      "fixture": "files",
+      "command": "ef snapshot",
+      "elapsed_ms": [752, 496, 489],
+      "minimum_ms": 489,
+      "median_ms": 496,
+      "maximum_ms": 752
+    },
+    {
+      "fixture": "files",
+      "command": "ef status",
+      "elapsed_ms": [9, 10, 9],
+      "minimum_ms": 9,
+      "median_ms": 9,
+      "maximum_ms": 10
+    },
+    {
+      "fixture": "files",
+      "command": "ef history --realm public --limit 20",
+      "elapsed_ms": [3, 3, 3],
+      "minimum_ms": 3,
+      "median_ms": 3,
+      "maximum_ms": 3
+    },
+    {
+      "fixture": "files",
+      "command": "ef diff --realm public",
+      "elapsed_ms": [309, 315, 308],
+      "minimum_ms": 308,
+      "median_ms": 309,
+      "maximum_ms": 315
+    },
+    {
+      "fixture": "files",
+      "command": "ef export --realm public",
+      "elapsed_ms": [56454],
+      "minimum_ms": 56454,
+      "median_ms": 56454,
+      "maximum_ms": 56454
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef status",
+      "elapsed_ms": [128, 115, 116],
+      "minimum_ms": 115,
+      "median_ms": 116,
+      "maximum_ms": 128
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef history --realm public --limit 20",
+      "elapsed_ms": [8, 7, 7],
+      "minimum_ms": 7,
+      "median_ms": 7,
+      "maximum_ms": 8
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef history --realm members --limit 20",
+      "elapsed_ms": [7, 7, 7],
+      "minimum_ms": 7,
+      "median_ms": 7,
+      "maximum_ms": 7
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef history --realm local --limit 20",
+      "elapsed_ms": [8, 8, 8],
+      "minimum_ms": 8,
+      "median_ms": 8,
+      "maximum_ms": 8
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef export --realm public",
+      "elapsed_ms": [178743],
+      "minimum_ms": 178743,
+      "median_ms": 178743,
+      "maximum_ms": 178743
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef export --realm members",
+      "elapsed_ms": [208201],
+      "minimum_ms": 208201,
+      "median_ms": 208201,
+      "maximum_ms": 208201
+    },
+    {
+      "fixture": "artifacts",
+      "command": "ef export --realm local",
+      "elapsed_ms": [209311],
+      "minimum_ms": 209311,
+      "median_ms": 209311,
+      "maximum_ms": 209311
+    }
+  ]
+}

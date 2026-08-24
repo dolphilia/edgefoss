@@ -176,6 +176,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ef-testkit"
+version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
+ "edgefoss-core",
+ "ef-format",
+ "ef-store-sqlite",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

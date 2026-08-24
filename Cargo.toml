@@ -4,6 +4,7 @@ members = [
   "crates/ef-cli",
   "crates/ef-format",
   "crates/ef-store-sqlite",
+  "crates/ef-testkit",
 ]
 resolver = "2"
 

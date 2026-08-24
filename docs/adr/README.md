@@ -23,5 +23,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0017](0017-explicit-composed-realm-bundles.md)            | Compose restricted bundles from verified bases      | Accepted for local alpha         |
 | [0018](0018-transactional-portable-bundle-import.md)       | Reconstruct accepted SQLite state from bundles      | Accepted for local alpha         |
 | [0019](0019-external-process-kill-sqlite-durability.md)    | Test SQLite recovery after external process kill    | Accepted for local alpha         |
+| [0020](0020-reproducible-local-scale-baselines.md)         | Separate constrained fixtures from timed commands   | Accepted for local alpha         |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.
