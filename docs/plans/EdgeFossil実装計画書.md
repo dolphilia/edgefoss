@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1、I2a、I2b、I2cはcommit/CI済み。I2dのrealm-isolated semantic root calculatorとpublic-members independence propertyはRust/TypeScript実装、local full check/buildまで完了し、commit/CI確認待ちである。残るG1 critical itemはI2dのCIと第三者実装可能性reviewである。詳細は各increment evidence、[`I2c graph/signature local evidence`](../evidence/i2c-graph-signature-local-2026-08-24.md)、[`I2d semantic-root local evidence`](../evidence/i2d-semantic-root-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2dはcommit/CI済み。I2eの独立実装可能性reviewでartifact ID mismatch、CBOR上限、unknown semantics、共有corpusの差を修正し、production codecに依存しないvector auditを追加した。I2eはlocal full check/build完了、commit/CI確認待ちである。ただし`bundle-v0`と独立readerが未作成のためG1はno-goであり、P2 critical pathへは進まない。詳細は[`I2e conformance-review evidence`](../evidence/i2e-conformance-review-local-2026-08-24.md)と[`G1 independent implementation readiness review`](../reviews/g1-independent-implementation-readiness-2026-08-24.md)を参照する。
 
 成果物:
 

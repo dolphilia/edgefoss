@@ -62,6 +62,7 @@ fn error_name(code: FormatErrorCode) -> &'static str {
         FormatErrorCode::ResourceLimit => "resource_limit",
         FormatErrorCode::InvalidSchema => "invalid_schema",
         FormatErrorCode::InvalidArtifactId => "invalid_artifact_id",
+        FormatErrorCode::ArtifactIdMismatch => "artifact_id_mismatch",
         FormatErrorCode::PathCollision => "path_collision",
         FormatErrorCode::CrossProjectReference => "cross_project_reference",
         FormatErrorCode::ParentRealmMismatch => "parent_realm_mismatch",

@@ -51,9 +51,19 @@ A format decoder MUST:
 3. deterministically re-encode the decoded value; and
 4. reject it as `non_canonical` unless the re-encoded bytes equal the input.
 
-Implementations MUST impose configurable nesting, collection-length, string,
-byte-string, and total-input limits before accepting untrusted data. The v0
-artifact transport limit is 1 MiB; larger content belongs in blobs.
+Before schema validation, a v0 decoder MUST enforce these interoperable limits:
+
+- encoded input is at most 1,048,576 bytes;
+- nesting below the top-level item is at most 64 levels;
+- the complete decoded value contains at most 65,536 items, counting map keys
+  and values separately; and
+- any declared byte string, text string, array, or map length is at most
+  1,048,576 before allocation or iteration.
+
+Schemas impose tighter field limits where needed. Implementations MAY apply a
+smaller transport limit before claiming that an input is an artifact, but such
+a deployment limit is not a different conformance result. Larger content
+belongs in blobs.
 
 ## Hashing
 

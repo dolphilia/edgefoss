@@ -21,6 +21,7 @@ export type FormatErrorCode =
   | "resource_limit"
   | "invalid_schema"
   | "invalid_artifact_id"
+  | "artifact_id_mismatch"
   | "path_collision"
   | "cross_project_reference"
   | "parent_realm_mismatch"

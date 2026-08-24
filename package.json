@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "check": "pnpm format:check && pnpm typecheck && pnpm test && pnpm rust:lint && pnpm docs:check",
+    "check": "pnpm format:check && pnpm typecheck && pnpm test && pnpm rust:lint && pnpm vectors:check && pnpm docs:check",
     "docs:check": "node tools/check-doc-links.mjs",
     "format": "prettier --write . && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all --check",
@@ -20,6 +20,7 @@
     "test:ts": "pnpm --filter @edgefoss/protocol test && pnpm --filter @edgefoss/worker test",
     "typecheck": "pnpm --filter @edgefoss/protocol typecheck && pnpm --filter @edgefoss/worker typecheck",
     "types": "pnpm --filter @edgefoss/worker types",
+    "vectors:check": "node tools/audit-vectors.mjs",
     "rust:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings"
   },
   "devDependencies": {

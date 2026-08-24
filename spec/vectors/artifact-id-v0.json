@@ -17,5 +17,17 @@
     "sha256:78ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656g",
     " sha256:78ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e",
     "sha256:78ac6588c390ceb2d29f2be9ff9e001d8af391985c0cf865b365ed69b786656e\n"
+  ],
+  "hash_cases": [
+    {
+      "name": "empty-body",
+      "body_hex": "",
+      "artifact_id": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "ascii-abc",
+      "body_hex": "616263",
+      "artifact_id": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    }
   ]
 }

@@ -16,6 +16,7 @@ export {
   encodeTree,
   formatArtifactId,
   parseArtifactId,
+  verifyArtifactId,
   type ArtifactMeta,
   type ChangeArtifactInput,
   type ProjectGenesisInput,

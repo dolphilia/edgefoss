@@ -36,6 +36,7 @@ pub enum FormatErrorCode {
     ResourceLimit,
     InvalidSchema,
     InvalidArtifactId,
+    ArtifactIdMismatch,
     PathCollision,
     CrossProjectReference,
     ParentRealmMismatch,
@@ -1057,6 +1058,23 @@ pub fn decode_change(bytes: &[u8]) -> Result<ChangeArtifact, FormatError> {
 pub fn artifact_id(canonical_body: &[u8]) -> String {
     let digest = Sha256::digest(canonical_body);
     format_artifact_id(&digest.into())
+}
+
+/// Verifies that canonical bytes match a claimed artifact ID.
+///
+/// # Errors
+///
+/// Returns `InvalidArtifactId` for malformed ID text and `ArtifactIdMismatch`
+/// when the valid claimed ID differs from the body hash.
+pub fn verify_artifact_id(canonical_body: &[u8], expected_id: &str) -> Result<(), FormatError> {
+    parse_artifact_id(expected_id)?;
+    if artifact_id(canonical_body) != expected_id {
+        return Err(FormatError::new(
+            FormatErrorCode::ArtifactIdMismatch,
+            "artifact ID does not match canonical bytes",
+        ));
+    }
+    Ok(())
 }
 
 /// Formats one raw SHA-256 digest as a canonical artifact identifier.

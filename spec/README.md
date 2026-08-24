@@ -30,3 +30,12 @@ reject an unknown profile or schema version; it MUST NOT guess, silently drop
 unknown fields, or reinterpret bytes under a newer schema. Adding an optional
 field therefore requires a new artifact schema even when the enclosing CBOR
 profile is unchanged.
+
+For a registered kind and schema, missing or unknown fields are
+`invalid_schema`. An unknown kind, schema, or required profile is
+`unknown_required_semantics`. An implementation MAY retain the original bytes
+in an explicitly opaque quarantine for forwarding or later upgrade, but this is
+not acceptance: it MUST NOT publish them, resolve refs through them, include
+them in a semantic root, or report their signature as accepted. Reprocessing
+after an implementation upgrade starts validation again from the original
+bytes.

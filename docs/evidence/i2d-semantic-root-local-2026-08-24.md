@@ -2,9 +2,9 @@
 
 - Increment: I2d, realm-isolated semantic-root executable specification
 - Base commit: `bed13df77dfbc21d64cf1101c4a543a736438b51`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `f72eae35978dca36fe66a18059f5aff5d71a98ca`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: pass; account owner confirmed GitHub Actions CI success
 
 ## Demonstrated slice
 

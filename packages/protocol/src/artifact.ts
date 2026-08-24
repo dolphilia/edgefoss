@@ -460,3 +460,16 @@ export async function artifactId(canonicalBody: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", body));
   return formatArtifactId(digest);
 }
+
+export async function verifyArtifactId(
+  canonicalBody: Uint8Array,
+  expectedId: string,
+): Promise<void> {
+  parseArtifactId(expectedId);
+  if ((await artifactId(canonicalBody)) !== expectedId) {
+    throw new FormatError(
+      "artifact_id_mismatch",
+      "artifact ID does not match canonical bytes",
+    );
+  }
+}

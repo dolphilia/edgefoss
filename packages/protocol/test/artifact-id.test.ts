@@ -7,12 +7,14 @@ import {
   formatArtifactId,
   FormatError,
   parseArtifactId,
+  verifyArtifactId,
 } from "../src/index.js";
 
 interface IdVectors {
   profile: string;
   valid: string[];
   invalid: string[];
+  hash_cases: Array<{ name: string; body_hex: string; artifact_id: string }>;
 }
 
 const vectorPath = fileURLToPath(
@@ -41,4 +43,17 @@ describe("artifact ID shared vectors", () => {
       }
     });
   }
+
+  it.each(vectors.hash_cases)("verifies hash case $name", async (entry) => {
+    const body = Uint8Array.from(
+      entry.body_hex.match(/../g)?.map((pair) => Number.parseInt(pair, 16)) ??
+        [],
+    );
+    await expect(
+      verifyArtifactId(body, entry.artifact_id),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyArtifactId(body, `sha256:${"0".repeat(64)}`),
+    ).rejects.toMatchObject({ code: "artifact_id_mismatch" });
+  });
 });

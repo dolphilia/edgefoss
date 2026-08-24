@@ -6,6 +6,11 @@ Artifacts are immutable values encoded with `edgefossil-cbor-v0`. Map entries
 shown below are schema fields, not serialization order; the CBOR profile decides
 their byte order.
 
+The executable v0 candidate registers exactly `project.genesis` schema 0,
+`tree` schema 0, and `change` schema 0. Other kinds and schema numbers have
+unknown required semantics and follow the quarantine rule in the specification
+index; they are not silently treated as one of these schemas.
+
 ## Common envelope
 
 Every non-genesis v0 artifact has exactly these fields:
