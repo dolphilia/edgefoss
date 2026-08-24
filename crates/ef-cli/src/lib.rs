@@ -6,14 +6,19 @@ use std::{
     ffi::{OsStr, OsString},
     fmt, fs,
     fs::{File, Metadata, OpenOptions},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use ed25519_dalek::{Signer, SigningKey};
 use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
-use ef_format::{ProjectGenesis, Realm, encode_project_genesis, validate_path};
+use ef_format::{
+    ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, artifact_id,
+    artifact_signature_message, encode_change, encode_project_genesis, validate_path,
+};
 use ef_store_sqlite::{LocalRepository, TrackingMode, TrackingRule, TrackingScope};
+use zeroize::Zeroizing;
 
 const METADATA_DIRECTORY: &str = ".edgefossil";
 const DATABASE_FILE: &str = "repository.sqlite3";
@@ -21,15 +26,17 @@ const MAX_SNAPSHOT_BLOB_BYTES: u64 = 16 * 1024 * 1024;
 const HELP: &str = "EdgeFossil local repository CLI
 
 Usage:
+  ef keygen --output <KEY_FILE>
   ef init --name <NAME> --actor-key <64 LOWERCASE HEX> [--path <DIRECTORY>]
   ef track [--local | --none | --realm <public|members>] [--path <DIRECTORY>] <TARGET>
   ef snapshot [--path <DIRECTORY>]
+  ef checkpoint --realm <public|members|local> -m <MESSAGE> --signing-key-file <KEY_FILE> [--path <DIRECTORY>]
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
 
-The actor key is an Ed25519 public key. This command does not generate or store
-a private key.";
+The actor key is an Ed25519 public key. Signing-key files must stay outside the
+repository and are never copied into its database or artifacts.";
 
 /// A user-facing command-line failure.
 #[derive(Debug)]
@@ -64,9 +71,11 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
     };
 
     match command.to_str() {
+        Some("keygen") => run_keygen(&parse_keygen(arguments)?),
         Some("init") => run_init(parse_init(arguments)?),
         Some("track") => run_track(&parse_track(arguments)?),
         Some("snapshot") => run_snapshot(&parse_snapshot(arguments)?),
+        Some("checkpoint") => run_checkpoint(&parse_checkpoint(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -104,6 +113,17 @@ struct TrackOptions {
 
 struct SnapshotOptions {
     path: PathBuf,
+}
+
+struct KeygenOptions {
+    output: PathBuf,
+}
+
+struct CheckpointOptions {
+    path: PathBuf,
+    realm: Realm,
+    message: String,
+    signing_key_file: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -145,6 +165,25 @@ fn parse_init(arguments: impl Iterator<Item = OsString>) -> Result<InitOptions, 
         name: name.ok_or_else(|| CliError::new("missing required option --name"))?,
         actor_key: actor_key.ok_or_else(|| CliError::new("missing required option --actor-key"))?,
         path: path.unwrap_or_else(|| PathBuf::from(".")),
+    })
+}
+
+fn parse_keygen(arguments: impl Iterator<Item = OsString>) -> Result<KeygenOptions, CliError> {
+    let mut output = None;
+    let mut arguments = arguments.peekable();
+    while let Some(option) = arguments.next() {
+        match option.to_str() {
+            Some("--output") => set_once(
+                &mut output,
+                PathBuf::from(parse_value(&mut arguments, "--output")?),
+                "--output",
+            )?,
+            Some(other) => return Err(CliError::new(format!("unknown keygen option `{other}`"))),
+            None => return Err(CliError::new("keygen option must be valid UTF-8")),
+        }
+    }
+    Ok(KeygenOptions {
+        output: output.ok_or_else(|| CliError::new("missing required option --output"))?,
     })
 }
 
@@ -228,6 +267,53 @@ fn parse_snapshot(arguments: impl Iterator<Item = OsString>) -> Result<SnapshotO
     })
 }
 
+fn parse_checkpoint(
+    arguments: impl Iterator<Item = OsString>,
+) -> Result<CheckpointOptions, CliError> {
+    let mut path = None;
+    let mut realm = None;
+    let mut message = None;
+    let mut signing_key_file = None;
+    let mut arguments = arguments.peekable();
+    while let Some(option) = arguments.next() {
+        match option.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some("--realm") => set_once(
+                &mut realm,
+                parse_checkpoint_realm(&parse_utf8_value(&mut arguments, "--realm")?)?,
+                "--realm",
+            )?,
+            Some("-m" | "--message") => set_once(
+                &mut message,
+                parse_utf8_value(&mut arguments, "-m/--message")?,
+                "-m/--message",
+            )?,
+            Some("--signing-key-file") => set_once(
+                &mut signing_key_file,
+                PathBuf::from(parse_value(&mut arguments, "--signing-key-file")?),
+                "--signing-key-file",
+            )?,
+            Some(other) => {
+                return Err(CliError::new(format!(
+                    "unknown checkpoint option `{other}`"
+                )));
+            }
+            None => return Err(CliError::new("checkpoint option must be valid UTF-8")),
+        }
+    }
+    Ok(CheckpointOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
+        realm: realm.ok_or_else(|| CliError::new("missing required option --realm"))?,
+        message: message.ok_or_else(|| CliError::new("missing required option -m/--message"))?,
+        signing_key_file: signing_key_file
+            .ok_or_else(|| CliError::new("missing required option --signing-key-file"))?,
+    })
+}
+
 fn set_tracking_selection(
     selection: &mut Option<TrackSelection>,
     value: TrackSelection,
@@ -247,6 +333,17 @@ fn parse_project_realm(value: &str) -> Result<Realm, CliError> {
         "members" => Ok(Realm::Members),
         _ => Err(CliError::new(
             "--realm must be `public` or `members`; use --local for local history",
+        )),
+    }
+}
+
+fn parse_checkpoint_realm(value: &str) -> Result<Realm, CliError> {
+    match value {
+        "public" => Ok(Realm::Public),
+        "members" => Ok(Realm::Members),
+        "local" => Ok(Realm::Local),
+        _ => Err(CliError::new(
+            "--realm must be `public`, `members`, or `local`",
         )),
     }
 }
@@ -367,6 +464,208 @@ fn run_init(options: InitOptions) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_keygen(options: &KeygenOptions) -> Result<(), CliError> {
+    let output = canonical_new_file_path(&options.output)?;
+    reject_symlink_if_present(&output, "signing key file")?;
+    let mut seed = Zeroizing::new([0_u8; 32]);
+    getrandom::fill(&mut *seed)
+        .map_err(|error| CliError::new(format!("OS random source failed: {error}")))?;
+    let signing_key = SigningKey::from_bytes(&seed);
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&output)
+        .map_err(|error| CliError::new(format!("cannot create {}: {error}", output.display())))?;
+    let write_result = (|| -> std::io::Result<()> {
+        let encoded = encode_secret_seed(&seed);
+        file.write_all(&encoded)?;
+        file.sync_all()
+    })();
+    if let Err(error) = write_result {
+        drop(file);
+        let _ = fs::remove_file(&output);
+        return Err(CliError::new(format!(
+            "cannot write {}: {error}",
+            output.display()
+        )));
+    }
+    println!(
+        "actor-key: {}",
+        encode_public_key(&signing_key.verifying_key().to_bytes())
+    );
+    println!("signing-key-file: {}", output.display());
+    Ok(())
+}
+
+fn run_checkpoint(options: &CheckpointOptions) -> Result<(), CliError> {
+    let start = canonical_directory(&options.path)?;
+    let root = find_repository_root(&start)?.ok_or_else(|| {
+        CliError::new(format!(
+            "no EdgeFossil repository found from {}",
+            start.display()
+        ))
+    })?;
+    let database_path = root.join(METADATA_DIRECTORY).join(DATABASE_FILE);
+    let mut repository = open_repository(&database_path)?;
+    let basis = repository
+        .checkpoint_basis(options.realm)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    let seed = read_signing_seed(&options.signing_key_file, &root)?;
+    let signing_key = SigningKey::from_bytes(&seed);
+    if signing_key.verifying_key().to_bytes() != basis.actor_key {
+        return Err(CliError::new(
+            "signing key does not match the repository genesis actor key",
+        ));
+    }
+    let change = ChangeArtifact {
+        meta: ArtifactMeta {
+            project: basis.project,
+            realm: basis.realm,
+            parents: basis.parent.into_iter().collect(),
+            actor_key: basis.actor_key,
+            logical_clock: basis.logical_clock,
+            created_at: current_timestamp()?,
+        },
+        root: basis.root,
+        message: options.message.clone(),
+    };
+    let change_body = encode_change(&change)
+        .map_err(|error| CliError::new(format!("invalid checkpoint change: {error}")))?;
+    let change_id = artifact_id(&change_body);
+    let mut artifact_ids = basis.artifacts_to_sign;
+    artifact_ids.push(change_id);
+    artifact_ids.sort();
+    artifact_ids.dedup();
+    let signatures = artifact_ids
+        .iter()
+        .map(|id| sign_artifact(&signing_key, id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = repository
+        .commit_checkpoint(&change, basis.expected_generation, &signatures)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    println!("checkpoint-{}: {}", options.realm.as_str(), result.change);
+    println!("root-{}: {}", options.realm.as_str(), change.root);
+    println!("ref: heads/main");
+    println!("generation: {}", result.generation);
+    println!("signatures: {}", result.stored_signatures);
+    Ok(())
+}
+
+fn sign_artifact(signing_key: &SigningKey, id: &str) -> Result<SignatureRecord, CliError> {
+    let message = artifact_signature_message(id)
+        .map_err(|error| CliError::new(format!("cannot sign artifact: {error}")))?;
+    Ok(SignatureRecord {
+        artifact: id.to_owned(),
+        actor_key: signing_key.verifying_key().to_bytes(),
+        signature: signing_key.sign(&message).to_bytes(),
+    })
+}
+
+fn canonical_new_file_path(path: &Path) -> Result<PathBuf, CliError> {
+    let name = path
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| CliError::new("--output must name a file"))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(canonical_directory(parent)?.join(name))
+}
+
+fn read_signing_seed(path: &Path, repository_root: &Path) -> Result<Zeroizing<[u8; 32]>, CliError> {
+    reject_symlink_if_present(path, "signing key file")?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| CliError::new(format!("cannot resolve {}: {error}", path.display())))?;
+    if canonical.starts_with(repository_root) {
+        return Err(CliError::new(
+            "signing key file must be stored outside the repository",
+        ));
+    }
+    let path_metadata = fs::symlink_metadata(&canonical).map_err(|error| {
+        CliError::new(format!("cannot inspect {}: {error}", canonical.display()))
+    })?;
+    if !path_metadata.is_file() {
+        return Err(CliError::new(format!(
+            "signing key path is not a regular file: {}",
+            canonical.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if path_metadata.permissions().mode() & 0o077 != 0 {
+            return Err(CliError::new(
+                "signing key file must not grant group or other permissions; use chmod 600",
+            ));
+        }
+    }
+    let mut file = File::open(&canonical)
+        .map_err(|error| CliError::new(format!("cannot open {}: {error}", canonical.display())))?;
+    let opened_metadata = file.metadata().map_err(|error| {
+        CliError::new(format!("cannot inspect {}: {error}", canonical.display()))
+    })?;
+    if !same_file(&path_metadata, &opened_metadata) {
+        return Err(CliError::new(
+            "signing key file changed while it was being opened",
+        ));
+    }
+    let mut encoded = Zeroizing::new(Vec::with_capacity(65));
+    (&mut file)
+        .take(66)
+        .read_to_end(&mut encoded)
+        .map_err(|error| CliError::new(format!("cannot read {}: {error}", canonical.display())))?;
+    let key_bytes = match encoded.as_slice() {
+        bytes if bytes.len() == 64 => bytes,
+        bytes if bytes.len() == 65 && bytes[64] == b'\n' => &bytes[..64],
+        _ => {
+            return Err(CliError::new(
+                "signing key file must contain exactly 64 lowercase hexadecimal characters and an optional newline",
+            ));
+        }
+    };
+    if !key_bytes
+        .iter()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    {
+        return Err(CliError::new(
+            "signing key file must contain exactly 64 lowercase hexadecimal characters and an optional newline",
+        ));
+    }
+    let mut seed = Zeroizing::new([0_u8; 32]);
+    for (index, pair) in key_bytes.chunks_exact(2).enumerate() {
+        seed[index] = (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]);
+    }
+    Ok(seed)
+}
+
+fn encode_secret_seed(seed: &[u8; 32]) -> Zeroizing<Vec<u8>> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = Zeroizing::new(Vec::with_capacity(65));
+    for byte in seed {
+        encoded.push(HEX[usize::from(byte >> 4)]);
+        encoded.push(HEX[usize::from(byte & 0x0f)]);
+    }
+    encoded.push(b'\n');
+    encoded
+}
+
+fn encode_public_key(key: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in key {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
 fn run_status(options: &StatusOptions) -> Result<(), CliError> {
     let start = canonical_directory(&options.path)?;
     let root = find_repository_root(&start)?.ok_or_else(|| {
@@ -397,6 +696,9 @@ fn run_status(options: &StatusOptions) -> Result<(), CliError> {
     let snapshot_roots = repository
         .working_snapshot_roots()
         .map_err(|error| CliError::new(error.to_string()))?;
+    let checkpoint_heads = repository
+        .checkpoint_heads()
+        .map_err(|error| CliError::new(error.to_string()))?;
 
     println!("repository: {}", root.display());
     println!("project: {project_id}");
@@ -412,6 +714,17 @@ fn run_status(options: &StatusOptions) -> Result<(), CliError> {
             .find(|root| root.realm == realm)
             .map_or("-", |root| root.id.as_str());
         println!("working-root-{}: {root}", realm.as_str());
+        let head = checkpoint_heads.iter().find(|head| head.realm == realm);
+        println!(
+            "checkpoint-head-{}: {}",
+            realm.as_str(),
+            head.map_or("-", |head| head.id.as_str())
+        );
+        println!(
+            "checkpoint-generation-{}: {}",
+            realm.as_str(),
+            head.map_or(0, |head| head.generation)
+        );
     }
     if let Some(target) = &options.explain {
         let (selector, _) = repository_selector(&root, &start, target)?;

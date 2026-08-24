@@ -1,19 +1,28 @@
 //! Transactional local `SQLite` storage for portable `EdgeFossil` state.
 
-use std::{error::Error, fmt, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
+    error::Error,
+    fmt,
+    path::Path,
+};
 
 use edgefoss_core::BuiltRealmSnapshot;
 use ef_format::{
-    FormatError, PathError, ProjectGenesis, Realm, TreeEntryMode, artifact_id,
-    decode_project_genesis, encode_project_genesis, encode_tree, parse_artifact_id, validate_path,
-    verify_artifact_id,
+    ArtifactMeta, ChangeArtifact, FormatError, GraphArtifactKind, GraphArtifactSummary, PathError,
+    ProjectGenesis, Realm, SignatureRecord, TreeEntryMode, artifact_id, decode_change,
+    decode_project_genesis, decode_tree, encode_change, encode_project_genesis,
+    encode_signature_record, encode_tree, parse_artifact_id, validate_change_graph, validate_path,
+    verify_artifact_id, verify_artifact_signature,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const MIGRATION_1: &str = include_str!("../migrations/0001_repository_identity.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_working_copy_tracking.sql");
 const MIGRATION_3: &str = include_str!("../migrations/0003_working_snapshots.sql");
+const MIGRATION_4: &str = include_str!("../migrations/0004_signed_checkpoints.sql");
+const CHECKPOINT_REF: &str = "heads/main";
 
 /// Storage failure with a stable distinction for initialization conflicts.
 #[derive(Debug)]
@@ -25,6 +34,8 @@ pub enum StoreError {
     Uninitialized,
     InvalidTracking(String),
     InvalidSnapshot(String),
+    InvalidCheckpoint(String),
+    RefConflict(String),
     Corrupt(String),
 }
 
@@ -40,6 +51,8 @@ impl fmt::Display for StoreError {
             Self::Uninitialized => formatter.write_str("repository is not initialized"),
             Self::InvalidTracking(message) => write!(formatter, "invalid tracking rule: {message}"),
             Self::InvalidSnapshot(message) => write!(formatter, "invalid snapshot: {message}"),
+            Self::InvalidCheckpoint(message) => write!(formatter, "invalid checkpoint: {message}"),
+            Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
     }
@@ -55,6 +68,8 @@ impl Error for StoreError {
             | Self::Uninitialized
             | Self::InvalidTracking(_)
             | Self::InvalidSnapshot(_)
+            | Self::InvalidCheckpoint(_)
+            | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }
     }
@@ -221,6 +236,35 @@ pub struct SnapshotRoot {
     pub captured_at: String,
 }
 
+/// Immutable inputs a caller must bind while constructing one checkpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointBasis {
+    pub project: String,
+    pub realm: Realm,
+    pub root: String,
+    pub parent: Option<String>,
+    pub expected_generation: u64,
+    pub logical_clock: u64,
+    pub actor_key: [u8; 32],
+    pub artifacts_to_sign: Vec<String>,
+}
+
+/// Result of atomically accepting a signed checkpoint and advancing its ref.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointResult {
+    pub change: String,
+    pub generation: u64,
+    pub stored_signatures: usize,
+}
+
+/// One accepted realm checkpoint ref.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointHead {
+    pub realm: Realm,
+    pub id: String,
+    pub generation: u64,
+}
+
 /// One open local repository database.
 pub struct LocalRepository {
     connection: Connection,
@@ -268,6 +312,7 @@ impl LocalRepository {
                 0 => MIGRATION_1,
                 1 => MIGRATION_2,
                 2 => MIGRATION_3,
+                3 => MIGRATION_4,
                 SCHEMA_VERSION => return Ok(()),
                 other => {
                     return Err(StoreError::Corrupt(format!(
@@ -651,6 +696,169 @@ impl LocalRepository {
         .collect()
     }
 
+    /// Returns the immutable snapshot/ref inputs for one realm checkpoint.
+    ///
+    /// The returned generation and root are compare-and-swap expectations.
+    /// Callers sign every listed artifact plus the change they construct.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing snapshot, unsupported key history, or
+    /// malformed repository state.
+    pub fn checkpoint_basis(&self, realm: Realm) -> Result<CheckpointBasis, StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let project = ef_format::format_artifact_id(&project_id);
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let root = query_working_root(&self.connection, &project_id, realm)?.ok_or_else(|| {
+            StoreError::InvalidCheckpoint(format!(
+                "{} has no working snapshot; run ef snapshot first",
+                realm.as_str()
+            ))
+        })?;
+        let (parent, expected_generation, logical_clock) = match query_ref(
+            &self.connection,
+            &project_id,
+            realm,
+            CHECKPOINT_REF,
+        )? {
+            Some((parent, generation)) => {
+                let parent_change =
+                    load_change(&self.connection, &project_id, &project, realm, &parent)?;
+                if parent_change.meta.actor_key != genesis.actor_key {
+                    return Err(StoreError::InvalidCheckpoint(
+                            "the current head uses a rotated actor key; key rotation is not supported in I3e"
+                                .into(),
+                        ));
+                }
+                let logical_clock =
+                    parent_change
+                        .meta
+                        .logical_clock
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            StoreError::InvalidCheckpoint("logical clock is exhausted".into())
+                        })?;
+                (Some(parent), generation, logical_clock)
+            }
+            None => (None, 0, 0),
+        };
+        let mut artifacts_to_sign = reachable_tree_ids(
+            &self.connection,
+            &project_id,
+            &project,
+            genesis.actor_key,
+            realm,
+            &root,
+        )?;
+        artifacts_to_sign.push(project.clone());
+        artifacts_to_sign.sort();
+        artifacts_to_sign.dedup();
+        Ok(CheckpointBasis {
+            project,
+            realm,
+            root,
+            parent,
+            expected_generation,
+            logical_clock,
+            actor_key: genesis.actor_key,
+            artifacts_to_sign,
+        })
+    }
+
+    /// Returns accepted realm checkpoint heads in disclosure order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for uninitialized or malformed stored state.
+    pub fn checkpoint_heads(&self) -> Result<Vec<CheckpointHead>, StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let mut heads = Vec::new();
+        for realm in [Realm::Public, Realm::Members, Realm::Local] {
+            if let Some((id, generation)) =
+                query_ref(&self.connection, &project_id, realm, CHECKPOINT_REF)?
+            {
+                heads.push(CheckpointHead {
+                    realm,
+                    id,
+                    generation,
+                });
+            }
+        }
+        Ok(heads)
+    }
+
+    /// Atomically stores a signed change and advances the realm checkpoint ref.
+    ///
+    /// The operation rechecks both the unsigned working root and ref generation
+    /// obtained from [`Self::checkpoint_basis`]. No artifact, signature, or ref
+    /// mutation remains committed after a failed validation or stale basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid graph/signature data, a stale root/ref, or
+    /// a storage failure.
+    pub fn commit_checkpoint(
+        &mut self,
+        change: &ChangeArtifact,
+        expected_generation: u64,
+        signatures: &[SignatureRecord],
+    ) -> Result<CheckpointResult, StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let project = ef_format::format_artifact_id(&project_id);
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let body = encode_change(change)?;
+        let change_id = artifact_id(&body);
+        if change.meta.project != project || change.meta.actor_key != genesis.actor_key {
+            return Err(StoreError::InvalidCheckpoint(
+                "change project or actor does not match repository genesis".into(),
+            ));
+        }
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let validated = validate_checkpoint_state(
+            &transaction,
+            &project_id,
+            &project,
+            &genesis,
+            change,
+            &change_id,
+            expected_generation,
+        )?;
+        let encoded_signatures = validate_checkpoint_signatures(
+            signatures,
+            &validated.expected_artifacts,
+            &genesis.actor_key,
+        )?;
+
+        store_change_body(
+            &transaction,
+            &project_id,
+            change.meta.realm,
+            &change_id,
+            &body,
+        )?;
+        for (record, encoded) in &encoded_signatures {
+            store_signature(&transaction, &project_id, record, encoded)?;
+        }
+
+        let generation = advance_checkpoint_ref(
+            &transaction,
+            &project_id,
+            change.meta.realm,
+            &change_id,
+            validated.parent.as_deref(),
+            expected_generation,
+        )?;
+        transaction.commit()?;
+        Ok(CheckpointResult {
+            change: change_id,
+            generation,
+            stored_signatures: encoded_signatures.len(),
+        })
+    }
+
     fn project_digest(&self) -> Result<Option<[u8; 32]>, StoreError> {
         let digest = self
             .connection
@@ -668,6 +876,501 @@ impl LocalRepository {
             })
             .transpose()
     }
+}
+
+struct ValidatedCheckpoint {
+    parent: Option<String>,
+    expected_artifacts: BTreeSet<String>,
+}
+
+fn validate_checkpoint_state(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+    change: &ChangeArtifact,
+    change_id: &str,
+    expected_generation: u64,
+) -> Result<ValidatedCheckpoint, StoreError> {
+    let current_root =
+        query_working_root(transaction, project_id, change.meta.realm)?.ok_or_else(|| {
+            StoreError::RefConflict("working snapshot was removed before checkpoint".into())
+        })?;
+    if change.root != current_root {
+        return Err(StoreError::RefConflict(
+            "working snapshot changed before checkpoint".into(),
+        ));
+    }
+    let parent = match query_ref(transaction, project_id, change.meta.realm, CHECKPOINT_REF)? {
+        Some((target, generation)) if generation == expected_generation => Some(target),
+        None if expected_generation == 0 => None,
+        _ => {
+            return Err(StoreError::RefConflict(
+                "realm head generation changed before checkpoint".into(),
+            ));
+        }
+    };
+    let expected_parents: Vec<String> = parent.iter().cloned().collect();
+    if change.meta.parents != expected_parents {
+        return Err(StoreError::RefConflict(
+            "change parent does not match the current realm head".into(),
+        ));
+    }
+    validate_checkpoint_clock(
+        transaction,
+        project_id,
+        project,
+        genesis,
+        change,
+        parent.as_deref(),
+    )?;
+
+    let mut summaries = BTreeMap::new();
+    summaries.insert(
+        change.root.clone(),
+        load_graph_summary(transaction, project_id, project, &change.root)?,
+    );
+    if let Some(parent) = &parent {
+        summaries.insert(
+            parent.clone(),
+            load_graph_summary(transaction, project_id, project, parent)?,
+        );
+    }
+    validate_change_graph(change, |id| summaries.get(id).cloned())?;
+
+    let mut expected_artifacts = reachable_tree_ids(
+        transaction,
+        project_id,
+        project,
+        genesis.actor_key,
+        change.meta.realm,
+        &change.root,
+    )?;
+    expected_artifacts.push(project.to_owned());
+    expected_artifacts.push(change_id.to_owned());
+    Ok(ValidatedCheckpoint {
+        parent,
+        expected_artifacts: expected_artifacts.into_iter().collect(),
+    })
+}
+
+fn validate_checkpoint_clock(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    project: &str,
+    genesis: &ProjectGenesis,
+    change: &ChangeArtifact,
+    parent: Option<&str>,
+) -> Result<(), StoreError> {
+    let expected_clock = if let Some(parent) = parent {
+        let parent_change =
+            load_change(transaction, project_id, project, change.meta.realm, parent)?;
+        if parent_change.meta.actor_key != genesis.actor_key {
+            return Err(StoreError::InvalidCheckpoint(
+                "the current head uses an unsupported actor key".into(),
+            ));
+        }
+        parent_change
+            .meta
+            .logical_clock
+            .checked_add(1)
+            .ok_or_else(|| StoreError::InvalidCheckpoint("logical clock is exhausted".into()))?
+    } else {
+        0
+    };
+    if change.meta.logical_clock != expected_clock {
+        return Err(StoreError::InvalidCheckpoint(
+            "change logical clock does not follow the current realm head".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn advance_checkpoint_ref(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    realm: Realm,
+    change_id: &str,
+    parent: Option<&str>,
+    expected_generation: u64,
+) -> Result<u64, StoreError> {
+    let generation = expected_generation
+        .checked_add(1)
+        .ok_or_else(|| StoreError::InvalidCheckpoint("ref generation is exhausted".into()))?;
+    let generation_sql = i64::try_from(generation).map_err(|_| {
+        StoreError::InvalidCheckpoint("ref generation exceeds SQLite integer range".into())
+    })?;
+    let change_digest = parse_artifact_id(change_id)?;
+    if expected_generation == 0 {
+        transaction.execute(
+            "INSERT INTO refs(project_id, realm, name, target_id, generation)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                project_id.as_slice(),
+                realm.as_str(),
+                CHECKPOINT_REF,
+                change_digest.as_slice(),
+                generation_sql
+            ],
+        )?;
+        return Ok(generation);
+    }
+    let prior_generation = i64::try_from(expected_generation).map_err(|_| {
+        StoreError::InvalidCheckpoint("ref generation exceeds SQLite integer range".into())
+    })?;
+    let parent_digest = parse_artifact_id(
+        parent.ok_or_else(|| StoreError::Corrupt("checkpoint ref lost its target".into()))?,
+    )?;
+    let changed = transaction.execute(
+        "UPDATE refs SET target_id = ?1, generation = ?2
+         WHERE project_id = ?3 AND realm = ?4 AND name = ?5
+           AND target_id = ?6 AND generation = ?7",
+        params![
+            change_digest.as_slice(),
+            generation_sql,
+            project_id.as_slice(),
+            realm.as_str(),
+            CHECKPOINT_REF,
+            parent_digest.as_slice(),
+            prior_generation
+        ],
+    )?;
+    if changed != 1 {
+        return Err(StoreError::RefConflict(
+            "realm head changed while committing checkpoint".into(),
+        ));
+    }
+    Ok(generation)
+}
+
+fn query_working_root(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    realm: Realm,
+) -> Result<Option<String>, StoreError> {
+    let digest = connection
+        .query_row(
+            "SELECT root_id FROM working_snapshot_roots
+             WHERE project_id = ?1 AND realm = ?2",
+            params![project_id.as_slice(), realm.as_str()],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()?;
+    digest
+        .map(|digest| {
+            let digest: [u8; 32] = digest
+                .try_into()
+                .map_err(|_| StoreError::Corrupt("working snapshot root is not 32 bytes".into()))?;
+            Ok(ef_format::format_artifact_id(&digest))
+        })
+        .transpose()
+}
+
+fn query_ref(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    realm: Realm,
+    name: &str,
+) -> Result<Option<(String, u64)>, StoreError> {
+    let row = connection
+        .query_row(
+            "SELECT target_id, generation FROM refs
+             WHERE project_id = ?1 AND realm = ?2 AND name = ?3",
+            params![project_id.as_slice(), realm.as_str(), name],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    row.map(|(digest, generation)| {
+        let digest: [u8; 32] = digest
+            .try_into()
+            .map_err(|_| StoreError::Corrupt("ref target is not 32 bytes".into()))?;
+        let generation = u64::try_from(generation)
+            .map_err(|_| StoreError::Corrupt("ref generation is negative".into()))?;
+        if generation == 0 {
+            return Err(StoreError::Corrupt("stored ref generation is zero".into()));
+        }
+        Ok((ef_format::format_artifact_id(&digest), generation))
+    })
+    .transpose()
+}
+
+fn load_artifact_row(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    id: &str,
+) -> Result<(String, String, i64, Vec<u8>), StoreError> {
+    let digest = parse_artifact_id(id)?;
+    let (stored_project, realm, kind, schema, body): (Vec<u8>, String, String, i64, Vec<u8>) =
+        connection
+            .query_row(
+                "SELECT project_id, realm, kind, schema_version, canonical_body
+             FROM artifacts WHERE id = ?1",
+                params![digest.as_slice()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::Corrupt(format!("referenced artifact {id} is missing")))?;
+    if stored_project.as_slice() != project_id {
+        return Err(StoreError::Corrupt(
+            "artifact row belongs to another project".into(),
+        ));
+    }
+    verify_artifact_id(&body, id)?;
+    Ok((realm, kind, schema, body))
+}
+
+fn load_change(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    realm: Realm,
+    id: &str,
+) -> Result<ChangeArtifact, StoreError> {
+    let (stored_realm, kind, schema, body) = load_artifact_row(connection, project_id, id)?;
+    if stored_realm != realm.as_str() || kind != "change" || schema != 0 {
+        return Err(StoreError::Corrupt(
+            "checkpoint ref target is not a same-realm schema-0 change".into(),
+        ));
+    }
+    let change = decode_change(&body)?;
+    if change.meta.project != project || change.meta.realm != realm {
+        return Err(StoreError::Corrupt(
+            "change body does not match stored project and realm".into(),
+        ));
+    }
+    Ok(change)
+}
+
+fn load_tree(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    actor_key: [u8; 32],
+    realm: Realm,
+    id: &str,
+) -> Result<ef_format::TreeArtifact, StoreError> {
+    let (stored_realm, kind, schema, body) = load_artifact_row(connection, project_id, id)?;
+    if stored_realm != realm.as_str() || kind != "tree" || schema != 0 {
+        return Err(StoreError::InvalidCheckpoint(
+            "working root reaches a non-tree or cross-realm artifact".into(),
+        ));
+    }
+    let tree = decode_tree(&body)?;
+    if tree.meta.project != project
+        || tree.meta.realm != realm
+        || tree.meta.actor_key != actor_key
+        || tree.meta.logical_clock != 0
+    {
+        return Err(StoreError::InvalidCheckpoint(
+            "working tree metadata does not match the checkpoint actor and realm".into(),
+        ));
+    }
+    Ok(tree)
+}
+
+fn reachable_tree_ids(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    actor_key: [u8; 32],
+    realm: Realm,
+    root: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut pending = vec![root.to_owned()];
+    let mut seen = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let tree = load_tree(connection, project_id, project, actor_key, realm, &id)?;
+        for entry in tree.entries {
+            match entry.mode {
+                TreeEntryMode::File | TreeEntryMode::Executable => {
+                    let digest = parse_artifact_id(&entry.target)?;
+                    let exists = connection
+                        .query_row(
+                            "SELECT 1 FROM blobs
+                             WHERE project_id = ?1 AND realm = ?2 AND digest = ?3",
+                            params![project_id.as_slice(), realm.as_str(), digest.as_slice()],
+                            |_| Ok(()),
+                        )
+                        .optional()?
+                        .is_some();
+                    if !exists {
+                        return Err(StoreError::InvalidCheckpoint(
+                            "working tree references a missing same-realm blob".into(),
+                        ));
+                    }
+                }
+                TreeEntryMode::Directory => pending.push(entry.target),
+                TreeEntryMode::Symlink => {}
+            }
+        }
+    }
+    let mut ids: Vec<_> = seen.into_iter().collect();
+    ids.sort();
+    Ok(ids)
+}
+
+fn load_graph_summary(
+    connection: &Connection,
+    project_id: &[u8; 32],
+    project: &str,
+    id: &str,
+) -> Result<GraphArtifactSummary, StoreError> {
+    let (realm, kind, schema, body) = load_artifact_row(connection, project_id, id)?;
+    if schema != 0 {
+        return Err(StoreError::InvalidCheckpoint(
+            "change graph reaches an unsupported artifact schema".into(),
+        ));
+    }
+    let realm = parse_realm(&realm)?;
+    let (kind, meta): (GraphArtifactKind, ArtifactMeta) = match kind.as_str() {
+        "tree" => (GraphArtifactKind::Tree, decode_tree(&body)?.meta),
+        "change" => (GraphArtifactKind::Change, decode_change(&body)?.meta),
+        _ => {
+            return Err(StoreError::InvalidCheckpoint(
+                "change graph reaches an unsupported artifact kind".into(),
+            ));
+        }
+    };
+    if meta.project != project || meta.realm != realm {
+        return Err(StoreError::Corrupt(
+            "artifact envelope does not match its storage metadata".into(),
+        ));
+    }
+    Ok(GraphArtifactSummary {
+        project: meta.project,
+        realm,
+        kind,
+        actor_key: meta.actor_key,
+        logical_clock: meta.logical_clock,
+    })
+}
+
+fn validate_checkpoint_signatures(
+    signatures: &[SignatureRecord],
+    expected_artifacts: &BTreeSet<String>,
+    actor_key: &[u8; 32],
+) -> Result<Vec<(SignatureRecord, Vec<u8>)>, StoreError> {
+    if signatures.len() != expected_artifacts.len() {
+        return Err(StoreError::InvalidCheckpoint(
+            "signature set does not exactly cover the checkpoint artifacts".into(),
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut encoded = Vec::with_capacity(signatures.len());
+    for record in signatures {
+        if !expected_artifacts.contains(&record.artifact) || !seen.insert(record.artifact.clone()) {
+            return Err(StoreError::InvalidCheckpoint(
+                "signature set does not exactly cover the checkpoint artifacts".into(),
+            ));
+        }
+        verify_artifact_signature(record, &record.artifact, actor_key)?;
+        encoded.push((record.clone(), encode_signature_record(record)?));
+    }
+    if &seen != expected_artifacts {
+        return Err(StoreError::InvalidCheckpoint(
+            "signature set does not exactly cover the checkpoint artifacts".into(),
+        ));
+    }
+    encoded.sort_by(|left, right| left.0.artifact.cmp(&right.0.artifact));
+    Ok(encoded)
+}
+
+fn store_change_body(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    realm: Realm,
+    id: &str,
+    body: &[u8],
+) -> Result<(), StoreError> {
+    let digest = parse_artifact_id(id)?;
+    transaction.execute(
+        "INSERT INTO artifacts(
+             id, project_id, realm, kind, schema_version, canonical_body
+         ) VALUES (?1, ?2, ?3, 'change', 0, ?4)
+         ON CONFLICT(id) DO NOTHING",
+        params![
+            digest.as_slice(),
+            project_id.as_slice(),
+            realm.as_str(),
+            body
+        ],
+    )?;
+    let existing: (Vec<u8>, String, String, i64, Vec<u8>) = transaction.query_row(
+        "SELECT project_id, realm, kind, schema_version, canonical_body
+         FROM artifacts WHERE id = ?1",
+        params![digest.as_slice()],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    if existing.0.as_slice() != project_id
+        || existing.1 != realm.as_str()
+        || existing.2 != "change"
+        || existing.3 != 0
+        || existing.4 != body
+    {
+        return Err(StoreError::Corrupt(
+            "change artifact ID is bound to different content".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn store_signature(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    record: &SignatureRecord,
+    encoded: &[u8],
+) -> Result<(), StoreError> {
+    let storage_id = artifact_id(encoded);
+    let storage_digest = parse_artifact_id(&storage_id)?;
+    let artifact_digest = parse_artifact_id(&record.artifact)?;
+    transaction.execute(
+        "INSERT INTO signatures(
+             storage_digest, project_id, artifact_id, actor_key, canonical_record
+         ) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT DO NOTHING",
+        params![
+            storage_digest.as_slice(),
+            project_id.as_slice(),
+            artifact_digest.as_slice(),
+            record.actor_key.as_slice(),
+            encoded
+        ],
+    )?;
+    let existing: (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) = transaction.query_row(
+        "SELECT storage_digest, project_id, actor_key, canonical_record
+         FROM signatures WHERE artifact_id = ?1 AND actor_key = ?2",
+        params![artifact_digest.as_slice(), record.actor_key.as_slice()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    if existing.0.as_slice() != storage_digest
+        || existing.1.as_slice() != project_id
+        || existing.2.as_slice() != record.actor_key
+        || existing.3 != encoded
+    {
+        return Err(StoreError::Corrupt(
+            "artifact signature is bound to different content".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn decode_tracking_rule(
@@ -917,9 +1620,12 @@ mod tests {
         LocalRepository, MIGRATION_1, SCHEMA_VERSION, StoreError, TrackingCounts, TrackingMode,
         TrackingRule, TrackingScope,
     };
+    use ed25519_dalek::{Signer, SigningKey};
     use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
     use ef_format::{
-        ProjectGenesis, Realm, artifact_id, encode_project_genesis, encode_tree, parse_artifact_id,
+        ArtifactMeta, ChangeArtifact, ProjectGenesis, Realm, SignatureRecord, artifact_id,
+        artifact_signature_message, encode_change, encode_project_genesis, encode_tree,
+        parse_artifact_id,
     };
     use rusqlite::{Connection, params};
 
@@ -938,6 +1644,76 @@ mod tests {
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ))
+    }
+
+    fn sign(signing_key: &SigningKey, artifact: &str) -> SignatureRecord {
+        let message = artifact_signature_message(artifact).unwrap();
+        SignatureRecord {
+            artifact: artifact.into(),
+            actor_key: signing_key.verifying_key().to_bytes(),
+            signature: signing_key.sign(&message).to_bytes(),
+        }
+    }
+
+    fn signed_repository() -> (LocalRepository, ProjectGenesis, String, SigningKey) {
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let mut repository = LocalRepository::open_in_memory().unwrap();
+        let genesis = ProjectGenesis {
+            name: "Signed".into(),
+            nonce: [10; 32],
+            actor_key: signing_key.verifying_key().to_bytes(),
+            created_at: "2026-08-24T00:00:00Z".into(),
+        };
+        let project = repository.init_project(&genesis).unwrap();
+        let snapshots = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[SnapshotInput {
+                path: "file.txt".into(),
+                realm: Realm::Public,
+                kind: SnapshotInputKind::File {
+                    bytes: b"signed".to_vec(),
+                    executable: false,
+                },
+            }],
+        )
+        .unwrap();
+        repository
+            .replace_working_snapshots(&snapshots, "2026-08-24T00:00:01Z")
+            .unwrap();
+        (repository, genesis, project, signing_key)
+    }
+
+    fn change_for_basis(
+        basis: &super::CheckpointBasis,
+        created_at: &str,
+        message: &str,
+    ) -> ChangeArtifact {
+        ChangeArtifact {
+            meta: ArtifactMeta {
+                project: basis.project.clone(),
+                realm: basis.realm,
+                parents: basis.parent.clone().into_iter().collect(),
+                actor_key: basis.actor_key,
+                logical_clock: basis.logical_clock,
+                created_at: created_at.into(),
+            },
+            root: basis.root.clone(),
+            message: message.into(),
+        }
+    }
+
+    fn signatures_for_basis(
+        basis: &super::CheckpointBasis,
+        change: &ChangeArtifact,
+        signing_key: &SigningKey,
+    ) -> (String, Vec<SignatureRecord>) {
+        let change_id = artifact_id(&encode_change(change).unwrap());
+        let mut ids = basis.artifacts_to_sign.clone();
+        ids.push(change_id.clone());
+        let signatures = ids.iter().map(|id| sign(signing_key, id)).collect();
+        (change_id, signatures)
     }
 
     #[test]
@@ -986,7 +1762,7 @@ mod tests {
                     row.get(0)
                 })
                 .unwrap();
-            assert_eq!(migration_count, 3);
+            assert_eq!(migration_count, 4);
             assert_eq!(repository.project_genesis().unwrap(), Some(genesis));
         }
         fs::remove_file(path).unwrap();
@@ -1317,6 +2093,102 @@ mod tests {
                 .is_err()
         );
         assert_eq!(repository.working_snapshot_roots().unwrap(), previous);
+    }
+
+    #[test]
+    fn signed_checkpoint_atomically_advances_one_realm_head() {
+        let (mut repository, _, _, signing_key) = signed_repository();
+        let basis = repository.checkpoint_basis(Realm::Public).unwrap();
+        assert_eq!(basis.expected_generation, 0);
+        assert_eq!(basis.logical_clock, 0);
+        assert_eq!(basis.parent, None);
+        let change = change_for_basis(&basis, "2026-08-24T00:00:02Z", "first");
+        let (change_id, signatures) = signatures_for_basis(&basis, &change, &signing_key);
+        let result = repository
+            .commit_checkpoint(&change, basis.expected_generation, &signatures)
+            .unwrap();
+        assert_eq!(result.change, change_id);
+        assert_eq!(result.generation, 1);
+        assert_eq!(result.stored_signatures, signatures.len());
+        assert_eq!(
+            repository.checkpoint_heads().unwrap(),
+            vec![super::CheckpointHead {
+                realm: Realm::Public,
+                id: change_id.clone(),
+                generation: 1,
+            }]
+        );
+
+        let next = repository.checkpoint_basis(Realm::Public).unwrap();
+        assert_eq!(next.parent.as_deref(), Some(change_id.as_str()));
+        assert_eq!(next.expected_generation, 1);
+        assert_eq!(next.logical_clock, 1);
+    }
+
+    #[test]
+    fn invalid_signature_and_stale_root_leave_no_checkpoint_residue() {
+        let (mut repository, genesis, project, signing_key) = signed_repository();
+        let first = repository.checkpoint_basis(Realm::Public).unwrap();
+        let first_change = change_for_basis(&first, "2026-08-24T00:00:02Z", "first");
+        let (_, first_signatures) = signatures_for_basis(&first, &first_change, &signing_key);
+        repository
+            .commit_checkpoint(&first_change, first.expected_generation, &first_signatures)
+            .unwrap();
+
+        let next = repository.checkpoint_basis(Realm::Public).unwrap();
+        let next_change = change_for_basis(&next, "2026-08-24T00:00:03Z", "second");
+        let (rejected_id, mut bad_signatures) =
+            signatures_for_basis(&next, &next_change, &signing_key);
+        bad_signatures.last_mut().unwrap().signature[0] ^= 1;
+        assert!(
+            repository
+                .commit_checkpoint(&next_change, next.expected_generation, &bad_signatures)
+                .is_err()
+        );
+        assert_eq!(repository.checkpoint_heads().unwrap()[0].generation, 1);
+        let rejected_digest = parse_artifact_id(&rejected_id).unwrap();
+        let rejected_rows: i64 = repository
+            .connection
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE id = ?1",
+                params![rejected_digest.as_slice()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rejected_rows, 0, "failed signature leaves no change row");
+
+        let replacement = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[SnapshotInput {
+                path: "file.txt".into(),
+                realm: Realm::Public,
+                kind: SnapshotInputKind::File {
+                    bytes: b"changed".to_vec(),
+                    executable: false,
+                },
+            }],
+        )
+        .unwrap();
+        repository
+            .replace_working_snapshots(&replacement, "2026-08-24T00:00:04Z")
+            .unwrap();
+        let (_, valid_signatures) = signatures_for_basis(&next, &next_change, &signing_key);
+        assert!(matches!(
+            repository.commit_checkpoint(&next_change, next.expected_generation, &valid_signatures),
+            Err(StoreError::RefConflict(_))
+        ));
+        assert_eq!(repository.checkpoint_heads().unwrap()[0].generation, 1);
+        let stale_rows: i64 = repository
+            .connection
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE id = ?1",
+                params![rejected_digest.as_slice()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale_rows, 0, "stale root leaves no change row");
     }
 
     #[test]

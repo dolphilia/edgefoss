@@ -109,7 +109,7 @@ fn initializes_repository_and_reports_status() {
     let status = stdout(&status);
     assert!(status.contains(&format!("project: {project_id}\n")));
     assert!(status.contains("name: Example\n"));
-    assert!(status.contains("schema: 3\n"));
+    assert!(status.contains("schema: 4\n"));
     assert!(status.contains("integrity: ok\n"));
 }
 
@@ -389,6 +389,194 @@ fn snapshots_realm_roots_without_cross_realm_churn() {
     let status = ef(&["status", "--path", root]);
     assert!(status.status.success(), "{}", stderr(&status));
     assert!(stdout(&status).contains(&format!("working-root-public: {first_public}\n")));
+}
+
+#[test]
+fn generates_a_protected_key_and_checkpoints_realms_independently() {
+    let directory = TestDirectory::new();
+    let key_directory = TestDirectory::new();
+    let key_path = key_directory.as_ref().join("owner.seed");
+    let generated = ef(&["keygen", "--output", key_path.to_str().unwrap()]);
+    assert!(generated.status.success(), "{}", stderr(&generated));
+    let actor_key = output_value(&generated, "actor-key: ");
+    assert_eq!(actor_key.len(), 64);
+    assert_eq!(
+        output_value(&generated, "signing-key-file: "),
+        fs::canonicalize(&key_path).unwrap().to_string_lossy()
+    );
+    assert_eq!(stdout(&generated).lines().count(), 2);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&key_path).unwrap().permissions().mode() & 0o077,
+            0
+        );
+    }
+
+    let root = directory.as_ref().to_str().unwrap();
+    let initialized = ef(&[
+        "init",
+        "--name",
+        "Checkpoints",
+        "--actor-key",
+        &actor_key,
+        "--path",
+        root,
+    ]);
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    fs::write(directory.as_ref().join("public.txt"), "public\n").unwrap();
+    fs::write(directory.as_ref().join("members.txt"), "members\n").unwrap();
+    assert!(
+        ef(&["track", "--path", root, "public.txt"])
+            .status
+            .success()
+    );
+    assert!(
+        ef(&["track", "--path", root, "--realm", "members", "members.txt",])
+            .status
+            .success()
+    );
+    let snapshot = ef(&["snapshot", "--path", root]);
+    assert!(snapshot.status.success(), "{}", stderr(&snapshot));
+
+    let public = ef(&[
+        "checkpoint",
+        "--path",
+        root,
+        "--realm",
+        "public",
+        "-m",
+        "public message",
+        "--signing-key-file",
+        key_path.to_str().unwrap(),
+    ]);
+    assert!(public.status.success(), "{}", stderr(&public));
+    let public_head = output_value(&public, "checkpoint-public: ");
+    assert!(stdout(&public).contains("generation: 1\n"));
+
+    let members = ef(&[
+        "checkpoint",
+        "--path",
+        root,
+        "--realm",
+        "members",
+        "-m",
+        "members-only message",
+        "--signing-key-file",
+        key_path.to_str().unwrap(),
+    ]);
+    assert!(members.status.success(), "{}", stderr(&members));
+    let members_head = output_value(&members, "checkpoint-members: ");
+    assert_ne!(members_head, public_head);
+    assert!(stdout(&members).contains("generation: 1\n"));
+
+    let second_public = ef(&[
+        "checkpoint",
+        "--path",
+        root,
+        "--realm",
+        "public",
+        "-m",
+        "second public message",
+        "--signing-key-file",
+        key_path.to_str().unwrap(),
+    ]);
+    assert!(second_public.status.success(), "{}", stderr(&second_public));
+    let second_public_head = output_value(&second_public, "checkpoint-public: ");
+    assert_ne!(second_public_head, public_head);
+    assert!(stdout(&second_public).contains("generation: 2\n"));
+
+    let status = ef(&["status", "--path", root]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let status = stdout(&status);
+    assert!(status.contains(&format!("checkpoint-head-public: {second_public_head}\n")));
+    assert!(status.contains("checkpoint-generation-public: 2\n"));
+    assert!(status.contains(&format!("checkpoint-head-members: {members_head}\n")));
+    assert!(status.contains("checkpoint-generation-members: 1\n"));
+    assert!(status.contains("checkpoint-head-local: -\n"));
+}
+
+#[test]
+fn rejects_wrong_or_repository_local_signing_keys_without_advancing_head() {
+    let directory = TestDirectory::new();
+    let key_directory = TestDirectory::new();
+    let owner_key = key_directory.as_ref().join("owner.seed");
+    let other_key = key_directory.as_ref().join("other.seed");
+    let owner = ef(&["keygen", "--output", owner_key.to_str().unwrap()]);
+    let other = ef(&["keygen", "--output", other_key.to_str().unwrap()]);
+    assert!(owner.status.success(), "{}", stderr(&owner));
+    assert!(other.status.success(), "{}", stderr(&other));
+    let actor_key = output_value(&owner, "actor-key: ");
+    let root = directory.as_ref().to_str().unwrap();
+    let initialized = ef(&[
+        "init",
+        "--name",
+        "Key boundaries",
+        "--actor-key",
+        &actor_key,
+        "--path",
+        root,
+    ]);
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    fs::write(directory.as_ref().join("file.txt"), "content\n").unwrap();
+    assert!(ef(&["track", "--path", root, "file.txt"]).status.success());
+    assert!(ef(&["snapshot", "--path", root]).status.success());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&other_key, fs::Permissions::from_mode(0o644)).unwrap();
+        let permissive = ef(&[
+            "checkpoint",
+            "--path",
+            root,
+            "--realm",
+            "public",
+            "-m",
+            "must fail permissions",
+            "--signing-key-file",
+            other_key.to_str().unwrap(),
+        ]);
+        assert!(!permissive.status.success());
+        assert!(stderr(&permissive).contains("use chmod 600"));
+        fs::set_permissions(&other_key, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let wrong = ef(&[
+        "checkpoint",
+        "--path",
+        root,
+        "--realm",
+        "public",
+        "-m",
+        "must fail",
+        "--signing-key-file",
+        other_key.to_str().unwrap(),
+    ]);
+    assert!(!wrong.status.success());
+    assert!(stderr(&wrong).contains("does not match the repository genesis actor key"));
+
+    let repository_key = directory.as_ref().join("copied.seed");
+    fs::copy(&owner_key, &repository_key).unwrap();
+    let inside = ef(&[
+        "checkpoint",
+        "--path",
+        root,
+        "--realm",
+        "public",
+        "-m",
+        "must also fail",
+        "--signing-key-file",
+        repository_key.to_str().unwrap(),
+    ]);
+    assert!(!inside.status.success());
+    assert!(stderr(&inside).contains("must be stored outside the repository"));
+
+    let status = ef(&["status", "--path", root]);
+    assert!(stdout(&status).contains("checkpoint-head-public: -\n"));
+    assert!(stdout(&status).contains("checkpoint-generation-public: 0\n"));
 }
 
 #[cfg(unix)]

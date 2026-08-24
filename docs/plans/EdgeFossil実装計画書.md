@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2f、I3a–I3cはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、SQLite/CLI/tracking intentに続き、I3dとしてtracked filesystemからrealm別blob/canonical treeを作り、unsigned working rootをatomicに置換する`ef snapshot`を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2f、I3a–I3dはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、SQLite/CLI/tracking intentとrealm別unsigned snapshotに続き、I3eとして秘密鍵をrepository外に保つ署名境界と、realm別change/refを一transactionで確定するcheckpointをlocal実装・検証中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)、[`I3e checkpoint evidence`](../evidence/i3e-signed-checkpoint-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-24）: I3a–I3cのSQLite/CLI/tracking intentはcommit/CI済み。I3dではschema migration v3、realm複合keyのraw blob、canonical tree builder、filesystem raceのbest-effort検出、symlink lexical escape拒否、全realm working rootの一括transaction置換を実装した。`ef snapshot`はunsigned working stateでありchange/ref/historyを進めず、members-only変更でpublic rootが変わらないことをE2Eで固定した。local full check/buildを通してcommit/CI確認待ちとし、その後はこのrootからrealm別changeを作るcheckpointと秘密鍵/署名boundaryを設計・実装する。
+実行状況（2026-08-24）: I3a–I3dはcommit/CI済み。I3dではschema migration v3、realm複合keyのraw blob、canonical tree builder、filesystem raceのbest-effort検出、symlink lexical escape拒否、全realm working rootの一括transaction置換を実装した。`ef snapshot`はunsigned working stateでありchange/ref/historyを進めず、members-only変更でpublic rootが変わらないことをE2Eで固定した。I3eではschema migration v4、保護済みlocal key fileを作る`ef keygen`、genesis/reachable tree/changeのexact署名検証、realm別`heads/main` generation CAS、`ef checkpoint --realm ...`を実装した。秘密鍵はrepository DBやartifactへ保存せず、明示指定したrepository外のkey fileからcheckpoint時だけ読む。local verification後にcommit/CIを確認し、その次はrealm別`ef history`とdiff/read modelへ進む。
 
 成果物:
 
@@ -556,16 +556,25 @@ Exit gate G1:
 CLIの最初のhappy path:
 
 ```text
-ef init
+ef keygen --output /safe/path/outside/project/owner.seed
+ef init --actor-key <keygenが表示したactor-key>
 ef track src/
 ef track --realm members ops/runbook.md
 ef track --local notes/private.md
 ef snapshot
-ef checkpoint -m "Initial parser"
+ef checkpoint --realm public -m "Initial parser" --signing-key-file /safe/path/outside/project/owner.seed
 ef export --view public public.edge
 ef export --view authority-complete complete.edge
 ef verify complete.edge
 ```
+
+local signing checkpoint U0.5:
+
+1. 合成一時鍵を使うunit/E2E/CI中はuser作業を求めない。
+2. 破棄不能な実データで最初の`ef init`を行う直前に、実装担当者はuserへ[`local署名鍵の手順`](../notes/EdgeFossil実装前にユーザーが準備するものの調査メモ.md#33-実データを扱う直前にlocal署名鍵を作る)を示す。
+3. user自身にrepository外の保存先を選んで`ef keygen`を実行してもらい、permission、暗号化backup、表示されたpublic actor keyを確認してもらう。seed内容の貼り付けは求めない。
+4. `ef init`後、最初の`checkpoint`直前にpublic messageが公開可能であることと、members/localは別commandであることを確認する。
+5. このcheckpointではCloudflare account、Wrangler login、API token、R2、DOを求めない。
 
 Exit gate G2:
 

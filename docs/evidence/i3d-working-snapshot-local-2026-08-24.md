@@ -2,9 +2,9 @@
 
 - Increment: I3d, realm-isolated unsigned working snapshots
 - Base commit: `e65344d6ef62435cf336078932d85e2e3f389e1e`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `6697e6cd8b0c3f2f75be16896a837e88b524badb`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: local pass; owner confirmed GitHub Actions pass on 2026-08-24
 
 ## Demonstrated slice
 

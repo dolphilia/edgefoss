@@ -21,11 +21,14 @@ pnpm check
 
 ## Local CLI
 
-The first local slice initializes one repository and reports its validated
-identity. Supply a 32-byte Ed25519 **public** key as 64 lowercase hexadecimal
-characters; the CLI neither needs nor stores the corresponding private key.
+Generate an Ed25519 signing key outside the project, then initialize one local
+repository with the printed public key. The private seed remains only in the
+permission-protected key file; the repository database never stores it.
 
 ```bash
+cargo run -p ef-cli --bin ef -- keygen \
+  --output /safe/path/outside/project/owner.seed
+
 cargo run -p ef-cli --bin ef -- init \
   --name "My project" \
   --actor-key "$ACTOR_PUBLIC_KEY_HEX" \
@@ -34,9 +37,10 @@ cargo run -p ef-cli --bin ef -- init \
 cargo run -p ef-cli --bin ef -- status --path /path/to/project
 ```
 
-Initialization creates only `.edgefossil/repository.sqlite3`. Set
-`ACTOR_PUBLIC_KEY_HEX` to your 64-character lowercase public-key encoding before
-running the example. `status` may run from any descendant directory.
+Copy the `actor-key` printed by `keygen` into `ACTOR_PUBLIC_KEY_HEX` before
+running `init`. Initialization creates only `.edgefossil/repository.sqlite3`.
+`status` may run from any descendant directory. Keep the seed file outside the
+repository and do not paste its contents into a command, log, issue, or chat.
 
 Working-copy tracking intent can then be recorded without reading or storing
 file content:
@@ -50,14 +54,18 @@ cargo run -p ef-cli --bin ef -- track --path /path/to/project \
 cargo run -p ef-cli --bin ef -- status --path /path/to/project \
   --explain ops/runbook.md
 cargo run -p ef-cli --bin ef -- snapshot --path /path/to/project
+cargo run -p ef-cli --bin ef -- checkpoint --path /path/to/project \
+  --realm public -m "Initial parser" \
+  --signing-key-file /safe/path/outside/project/owner.seed
 ```
 
 The default destination is `project/public`; `--realm members`, `--local`, and
 `--none` are mutually exclusive. Tracking state is device-local staging intent,
 not a portable policy artifact. `snapshot` reads selected files, builds
 realm-isolated raw blobs and canonical trees, and atomically replaces unsigned
-working roots. It does not create history. Commands for key creation, signing,
-checkpoint/history, and export/import are not implemented yet.
+working roots. `checkpoint` signs and advances exactly one realm's `heads/main`
+ref atomically; use a public-safe message for the public realm. History, diff,
+and export/import commands are not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.

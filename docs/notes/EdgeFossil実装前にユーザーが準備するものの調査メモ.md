@@ -12,6 +12,7 @@
 |---|---|---:|
 | P0開始前 | supported Node.js LTS | 必要。現在のNode.jsは更新対象 |
 | P0開始前 | Git、Rust toolchain、pnpm | 準備済み |
+| 実データで最初のlocal repositoryを作る直前 | EdgeFossil署名鍵と暗号化backup | まだ不要。I3eの実装testは合成一時鍵で行う |
 | 最初のremote deploy前 | Cloudflare account、2FA、recovery codes | accountがなければ準備 |
 | P3/P4直前 | Wrangler OAuth login、`workers.dev` subdomain | その時に設定 |
 | P4直前 | R2 subscriptionとbilling profile | その時に設定 |
@@ -118,6 +119,70 @@ pnpm --version
 すべて成功すれば追加installは不要である。
 
 SQLite CLI、Docker、Terraform、D1 CLI、Cloudflare TunnelはP0開始条件ではない。local SQLiteはRust libraryから扱い、Cloudflare local runtimeはWranglerのproject dependencyから使う。
+
+### 3.3 実データを扱う直前にlocal署名鍵を作る
+
+この手順は`ef keygen`と`ef checkpoint`が実装されたI3e以降で、**破棄可能なtestではない最初のrepositoryを`ef init`する直前**に一度だけ行う。現在の実装・CI確認だけなら、testが一時鍵を自動生成するためuser作業は不要である。
+
+まずrepositoryの外にownerだけが読めるdirectoryを用意する。次の`my-project`は秘密を含まない識別名へ置き換える。
+
+```bash
+mkdir -p ~/.config/edgefossil/keys
+chmod 700 ~/.config/edgefossil ~/.config/edgefossil/keys
+cargo run -p ef-cli --bin ef -- keygen \
+  --output ~/.config/edgefossil/keys/my-project-owner.seed
+```
+
+commandは次の二行だけを表示する。
+
+```text
+actor-key: <64文字の公開鍵>
+signing-key-file: <鍵fileの絶対path>
+```
+
+`actor-key`は公開情報であり、続く`init --actor-key`へ指定する。鍵fileの内容は32-byte Ed25519 seedであり秘密である。CLIは内容を表示しない。
+
+```bash
+cargo run -p ef-cli --bin ef -- init \
+  --name "My project" \
+  --actor-key <keygenが表示したactor-key> \
+  --path /path/to/project
+```
+
+確認する。
+
+```bash
+stat -f '%Sp %N' ~/.config/edgefossil/keys/my-project-owner.seed
+cargo run -p ef-cli --bin ef -- status --path /path/to/project
+```
+
+合格条件:
+
+- key fileのpermissionが`-rw-------`である。
+- key fileがproject directoryや`.edgefossil`の内側にない。
+- `status`のproject identityが表示される。
+- `init`へ渡した公開鍵とkey fileの組が分かるよう、秘密を含まないproject名だけをpassword manager等へ記録する。
+- key fileを暗号化されたbackupへ一つ保存し、復元できることを確認する。I3eでは鍵rotation/recoveryが未実装なので、原本とbackupの両方を失うと新しいcheckpointを署名できない。
+
+snapshot後、履歴へ確定する時はrealmとmessageを明示する。
+
+```bash
+cargo run -p ef-cli --bin ef -- checkpoint \
+  --path /path/to/project \
+  --realm public \
+  -m "Initial parser" \
+  --signing-key-file ~/.config/edgefossil/keys/my-project-owner.seed
+```
+
+`--realm public`のmessageは将来webへ公開され得る。restrictedな説明は`--realm members`の別checkpointへ書き、端末内だけの説明は`--realm local`へ書く。一つのcommandで複数realmを進めないのはmessageの誤公開を防ぐためである。
+
+禁止事項:
+
+- seed内容をterminal command、shell環境変数、`.env`、repository、issue、chatへ貼らない。
+- test用repositoryと実データrepositoryでowner keyを使い回さない。
+- public keyだけを保存してseed fileを削除しない。public keyから署名seedは復元できない。
+
+このlocal署名鍵はCloudflare API tokenやWrangler credentialとは別物であり、Cloudflareへ登録・uploadしない。
 
 ---
 

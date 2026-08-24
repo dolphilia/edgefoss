@@ -13,9 +13,11 @@ path = "src/main.rs"
 
 [dependencies]
 edgefoss-core = { path = "../edgefoss-core" }
+ed25519-dalek = { version = "2.2", features = ["zeroize"] }
 ef-format = { path = "../ef-format" }
 ef-store-sqlite = { path = "../ef-store-sqlite" }
 getrandom = "0.4.3"
+zeroize = "1.9"
 
 [lints]
 workspace = true
