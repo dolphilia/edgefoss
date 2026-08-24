@@ -2,10 +2,9 @@
 
 - Increment: I2f, experimental realm bundle and independent reader
 - Base commit: `17aee14c9e4d2d51b54c5febb651a4e42ddef15a`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `f928d7358f73f34eca9690d8566d4c86d5909cf6`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; G1 is a go candidate; commit and GitHub Actions CI
-  confirmation pending
+- Result: pass; account owner confirmed GitHub Actions CI success; G1 is go
 
 ## Demonstrated slice
 
@@ -35,8 +34,8 @@ invalid mutations. Together with the general vector audit, current totals are:
 ## Gate effect
 
 The detailed [`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)
-finds every technical G1 condition satisfied locally. G1 remains a go candidate
-until this increment is committed and GitHub Actions succeeds.
+finds every technical G1 condition satisfied. Commit and GitHub Actions evidence
+now confirms the G1 go decision.
 
 ## Scope boundary
 

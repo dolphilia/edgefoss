@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2eはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript manifest/object verifier、production codecに依存しないbundle readerを追加した。9個の共有vector file、64 accepted/81 rejected cases、5 bundle mutationとlocal full check/buildに合格し、G1はlocal go candidateとなった。I2fのcommit/CI確認後にG1 goを確定する。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)と[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2fはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathを開始し、I3aでSQLite migration version 1、transactional project init、canonical genesisの再検証付き永続化を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -539,6 +539,8 @@ Exit gate G1:
 - specだけを読んだ第三者がvector verifierを実装できる程度に曖昧さが除かれる。
 
 ### P2: local repository alpha（7–10 person-weeks）
+
+実行状況（2026-08-24）: G1 go後の最初increment I3aとして、`ef-store-sqlite`、番号付きmigration、WAL/FULL/foreign-key接続policy、冪等project genesis init/reopenを実装した。local full check/buildは完了し、commit/CI確認待ちである。確認後にCLI `ef init`へ進む。
 
 成果物:
 

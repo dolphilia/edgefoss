@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/edgefoss-core", "crates/ef-format"]
+members = ["crates/edgefoss-core", "crates/ef-format", "crates/ef-store-sqlite"]
 resolver = "2"
 
 [workspace.package]

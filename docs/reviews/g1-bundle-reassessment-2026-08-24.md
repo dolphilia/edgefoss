@@ -2,8 +2,8 @@
 
 ## Decision
 
-**Local go candidate; commit and CI confirmation pending.** I2f closes blocker
-G1-1 from the earlier
+**Go.** I2f commit `f928d7358f73f34eca9690d8566d4c86d5909cf6` passed
+GitHub Actions and closes blocker G1-1 from the earlier
 [`independent implementation readiness review`](g1-independent-implementation-readiness-2026-08-24.md).
 The decision applies to the experimental P1 candidate and does not freeze v0
 compatibility.
@@ -43,6 +43,5 @@ container verification alone is never treated as authority acceptance.
 - The `experimental = true` candidate remains disposable until the later D3b
   compatibility freeze.
 
-After the I2f commit passes GitHub Actions, the G1 decision can be recorded as
-go and the P2 local repository critical path may start. No Cloudflare resource
-is required for that transition.
+The P2 local repository critical path may start. No Cloudflare resource is
+required for that transition.

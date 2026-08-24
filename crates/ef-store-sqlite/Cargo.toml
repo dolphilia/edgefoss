@@ -1,0 +1,15 @@
+[package]
+name = "ef-store-sqlite"
+description = "Transactional local SQLite storage for EdgeFossil"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+ef-format = { path = "../ef-format" }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+
+[lints]
+workspace = true
