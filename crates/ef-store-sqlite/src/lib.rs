@@ -29,6 +29,46 @@ const CHECKPOINT_REF: &str = "heads/main";
 const MAX_HISTORY_LIMIT: usize = 1_000;
 const MAX_DIFF_ENTRIES: usize = 100_000;
 
+#[cfg(test)]
+static TEST_PROCESS_KILL_ARMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+fn arm_test_process_kill() {
+    TEST_PROCESS_KILL_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn pause_at_test_kill_point(point: &str) {
+    use std::io::Write as _;
+
+    if !TEST_PROCESS_KILL_ARMED.load(std::sync::atomic::Ordering::SeqCst)
+        || std::env::var("EDGEFOSS_TEST_KILL_POINT").as_deref() != Ok(point)
+    {
+        return;
+    }
+    let marker = std::env::var_os("EDGEFOSS_TEST_KILL_MARKER")
+        .expect("kill-test child requires a marker path");
+    let mut marker = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(marker)
+        .expect("kill-test child cannot create its marker");
+    writeln!(marker, "{point}").expect("kill-test child cannot write its marker");
+    marker
+        .sync_all()
+        .expect("kill-test child cannot sync its marker");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("kill-test parent did not terminate child at {point}");
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn pause_at_test_kill_point(_point: &str) {}
+
 /// Storage failure with a stable distinction for initialization conflicts.
 #[derive(Debug)]
 pub enum StoreError {
@@ -521,12 +561,15 @@ impl LocalRepository {
              VALUES (?1, ?1, 'public', 'project.genesis', 0, ?2)",
             params![digest.as_slice(), body],
         )?;
+        pause_at_test_kill_point("init.after_artifact");
         transaction.execute(
             "INSERT INTO repository(singleton, project_id, format_status)
              VALUES (1, ?1, 'experimental')",
             params![digest.as_slice()],
         )?;
+        pause_at_test_kill_point("init.after_repository");
         transaction.commit()?;
+        pause_at_test_kill_point("init.after_commit");
         Ok(project_id)
     }
 
@@ -762,6 +805,7 @@ impl LocalRepository {
             "DELETE FROM working_snapshot_roots WHERE project_id = ?1",
             params![project_id.as_slice()],
         )?;
+        pause_at_test_kill_point("snapshot.after_root_delete");
         for snapshot in snapshots {
             store_snapshot_blobs(&transaction, &project_id, snapshot)?;
             store_snapshot_trees(
@@ -773,8 +817,10 @@ impl LocalRepository {
                 snapshot,
             )?;
             store_snapshot_root(&transaction, &project_id, captured_at, snapshot)?;
+            pause_at_test_kill_point("snapshot.after_root");
         }
         transaction.commit()?;
+        pause_at_test_kill_point("snapshot.after_commit");
         Ok(())
     }
 
@@ -1117,6 +1163,7 @@ impl LocalRepository {
         }
         let generation = imported_generation(&manifest, objects)?;
         transaction.commit()?;
+        pause_at_test_kill_point("import.after_commit");
         Ok(ImportResult {
             project: verified.project().to_owned(),
             realm: verified.realm(),
@@ -1177,8 +1224,10 @@ impl LocalRepository {
             &change_id,
             &body,
         )?;
+        pause_at_test_kill_point("checkpoint.after_change");
         for (record, encoded) in &encoded_signatures {
             store_signature(&transaction, &project_id, record, encoded)?;
+            pause_at_test_kill_point("checkpoint.after_signature");
         }
 
         let generation = advance_checkpoint_ref(
@@ -1189,7 +1238,9 @@ impl LocalRepository {
             validated.parent.as_deref(),
             expected_generation,
         )?;
+        pause_at_test_kill_point("checkpoint.after_ref");
         transaction.commit()?;
+        pause_at_test_kill_point("checkpoint.after_commit");
         Ok(CheckpointResult {
             change: change_id,
             generation,
@@ -1329,6 +1380,7 @@ fn insert_imported_bundle(
                 body
             ],
         )?;
+        pause_at_test_kill_point("import.after_artifact");
     }
     if manifest.realm == Realm::Public {
         transaction.execute(
@@ -1336,6 +1388,7 @@ fn insert_imported_bundle(
              VALUES (1, ?1, 'experimental')",
             params![project_id.as_slice()],
         )?;
+        pause_at_test_kill_point("import.after_repository");
     }
     for id in &manifest.blobs {
         let digest = parse_artifact_id(id)?;
@@ -1350,11 +1403,13 @@ fn insert_imported_bundle(
                 body
             ],
         )?;
+        pause_at_test_kill_point("import.after_blob");
     }
     for id in &manifest.signatures {
         let body = &objects[&bundle_object_path("signatures", id)];
         let record = decode_signature_record(body)?;
         store_signature(transaction, project_id, &record, body)?;
+        pause_at_test_kill_point("import.after_signature");
     }
     let generation = imported_generation(manifest, objects)?;
     let generation = i64::try_from(generation)
@@ -1371,6 +1426,7 @@ fn insert_imported_bundle(
             generation
         ],
     )?;
+    pause_at_test_kill_point("import.after_ref");
     Ok(())
 }
 
@@ -2774,6 +2830,7 @@ fn store_snapshot_blobs(
                 blob.bytes
             ],
         )?;
+        pause_at_test_kill_point("snapshot.after_blob");
         let existing: Vec<u8> = transaction.query_row(
             "SELECT content FROM blobs
              WHERE project_id = ?1 AND realm = ?2 AND digest = ?3",
@@ -2819,6 +2876,7 @@ fn store_snapshot_trees(
             &tree.artifact.entries,
         )?;
         store_tree_body(transaction, project_id, snapshot.realm, &tree.id, &body)?;
+        pause_at_test_kill_point("snapshot.after_tree");
     }
     Ok(())
 }
@@ -2964,7 +3022,14 @@ fn require_tree(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+        sync::atomic::{AtomicU64, Ordering},
+        thread,
+        time::{Duration, Instant},
+    };
 
     use super::{
         LocalRepository, MIGRATION_1, SCHEMA_VERSION, StoreError, TrackingCounts, TrackingMode,
@@ -2978,6 +3043,8 @@ mod tests {
         encode_tree, parse_artifact_id,
     };
     use rusqlite::{Connection, params};
+
+    static PROCESS_KILL_CASE: AtomicU64 = AtomicU64::new(0);
 
     fn genesis(nonce_byte: u8) -> ProjectGenesis {
         ProjectGenesis {
@@ -3098,6 +3165,288 @@ mod tests {
             .commit_checkpoint(&change, basis.expected_generation, &signatures)
             .unwrap();
         change_id
+    }
+
+    fn file_signed_repository(path: &Path) -> (LocalRepository, SigningKey) {
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let mut repository = LocalRepository::open(path).unwrap();
+        let genesis = ProjectGenesis {
+            name: "Process kill".into(),
+            nonce: [11; 32],
+            actor_key: signing_key.verifying_key().to_bytes(),
+            created_at: "2026-08-25T00:00:00Z".into(),
+        };
+        let project = repository.init_project(&genesis).unwrap();
+        let snapshots = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[SnapshotInput {
+                path: "file.txt".into(),
+                realm: Realm::Public,
+                kind: SnapshotInputKind::File {
+                    bytes: b"before kill".to_vec(),
+                    executable: false,
+                },
+            }],
+        )
+        .unwrap();
+        repository
+            .replace_working_snapshots(&snapshots, "2026-08-25T00:00:01Z")
+            .unwrap();
+        (repository, signing_key)
+    }
+
+    fn table_count(repository: &LocalRepository, table: &str) -> i64 {
+        repository
+            .connection
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    fn assert_full_integrity(repository: &LocalRepository) {
+        let integrity: String = repository
+            .connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        let foreign_key_failures = repository
+            .connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .mapped(|_| Ok(()))
+            .count();
+        assert_eq!(foreign_key_failures, 0);
+    }
+
+    fn remove_database_files(database: &Path, marker: &Path) {
+        for path in [
+            database.to_path_buf(),
+            database.with_extension("sqlite3-wal"),
+            database.with_extension("sqlite3-shm"),
+            marker.to_path_buf(),
+        ] {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    fn verify_process_kill_result(operation: &str, point: &str, database: &Path) {
+        let repository = LocalRepository::open(database).unwrap();
+        assert_full_integrity(&repository);
+        let committed = point.ends_with("after_commit");
+        match operation {
+            "init" => {
+                assert_eq!(repository.project_id().unwrap().is_some(), committed);
+                assert_eq!(table_count(&repository, "repository"), i64::from(committed));
+                assert_eq!(table_count(&repository, "artifacts"), i64::from(committed));
+            }
+            "snapshot" => {
+                assert!(repository.project_id().unwrap().is_some());
+                assert_eq!(
+                    repository.working_snapshot_roots().unwrap().len(),
+                    usize::from(committed)
+                );
+                assert_eq!(table_count(&repository, "blobs"), i64::from(committed));
+                assert_eq!(
+                    table_count(&repository, "artifacts"),
+                    1 + i64::from(committed)
+                );
+            }
+            "checkpoint" => {
+                assert_eq!(
+                    repository.checkpoint_heads().unwrap().len(),
+                    usize::from(committed)
+                );
+                assert_eq!(
+                    repository.history(Realm::Public, 20).unwrap().len(),
+                    usize::from(committed)
+                );
+                assert_eq!(
+                    table_count(&repository, "artifacts"),
+                    2 + i64::from(committed)
+                );
+                assert_eq!(
+                    table_count(&repository, "signatures"),
+                    if committed { 3 } else { 0 }
+                );
+            }
+            "import" => {
+                assert_eq!(repository.project_id().unwrap().is_some(), committed);
+                assert_eq!(table_count(&repository, "refs"), i64::from(committed));
+                if committed {
+                    assert_eq!(repository.checkpoint_heads().unwrap().len(), 1);
+                    assert_eq!(repository.history(Realm::Public, 20).unwrap().len(), 1);
+                } else {
+                    for table in ["repository", "artifacts", "blobs", "signatures", "refs"] {
+                        assert_eq!(table_count(&repository, table), 0);
+                    }
+                }
+            }
+            other => panic!("unknown process-kill operation {other}"),
+        }
+    }
+
+    fn run_process_kill_case(operation: &str, point: &str) {
+        let sequence = PROCESS_KILL_CASE.fetch_add(1, Ordering::Relaxed);
+        let stem = format!(
+            "edgefoss-process-kill-{}-{sequence}-{operation}-{}",
+            std::process::id(),
+            point.replace('.', "-")
+        );
+        let database = std::env::temp_dir().join(format!("{stem}.sqlite3"));
+        let marker = std::env::temp_dir().join(format!("{stem}.marker"));
+        remove_database_files(&database, &marker);
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::process_kill_child",
+                "--nocapture",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .env("EDGEFOSS_TEST_KILL_OPERATION", operation)
+            .env("EDGEFOSS_TEST_KILL_POINT", point)
+            .env("EDGEFOSS_TEST_KILL_DATABASE", &database)
+            .env("EDGEFOSS_TEST_KILL_MARKER", &marker)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !marker.is_file() {
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("child exited with {status} before process-kill point {point}");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("child did not reach process-kill point {point}");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        child.kill().unwrap();
+        assert!(!child.wait().unwrap().success());
+        verify_process_kill_result(operation, point, &database);
+        remove_database_files(&database, &marker);
+    }
+
+    #[test]
+    #[ignore = "invoked as a subprocess by the process-kill parent test"]
+    fn process_kill_child() {
+        let Ok(operation) = std::env::var("EDGEFOSS_TEST_KILL_OPERATION") else {
+            return;
+        };
+        let database = PathBuf::from(std::env::var_os("EDGEFOSS_TEST_KILL_DATABASE").unwrap());
+        match operation.as_str() {
+            "init" => {
+                let mut repository = LocalRepository::open(&database).unwrap();
+                super::arm_test_process_kill();
+                repository.init_project(&genesis(12)).unwrap();
+            }
+            "snapshot" => {
+                let mut repository = LocalRepository::open(&database).unwrap();
+                let genesis = genesis(13);
+                let project = repository.init_project(&genesis).unwrap();
+                let snapshots = build_realm_snapshots(
+                    &project,
+                    genesis.actor_key,
+                    &genesis.created_at,
+                    &[SnapshotInput {
+                        path: "file.txt".into(),
+                        realm: Realm::Public,
+                        kind: SnapshotInputKind::File {
+                            bytes: b"snapshot kill".to_vec(),
+                            executable: false,
+                        },
+                    }],
+                )
+                .unwrap();
+                super::arm_test_process_kill();
+                repository
+                    .replace_working_snapshots(&snapshots, "2026-08-25T00:00:01Z")
+                    .unwrap();
+            }
+            "checkpoint" => {
+                let (mut repository, signing_key) = file_signed_repository(&database);
+                let basis = repository.checkpoint_basis(Realm::Public).unwrap();
+                let change = change_for_basis(&basis, "2026-08-25T00:00:02Z", "kill checkpoint");
+                let (_, signatures) = signatures_for_basis(&basis, &change, &signing_key);
+                super::arm_test_process_kill();
+                repository
+                    .commit_checkpoint(&change, basis.expected_generation, &signatures)
+                    .unwrap();
+            }
+            "import" => {
+                let (mut source, _, _, signing_key) = signed_repository();
+                commit_realm(
+                    &mut source,
+                    &signing_key,
+                    Realm::Public,
+                    "2026-08-25T00:00:02Z",
+                    "kill import",
+                );
+                let bundle = source.export_bundle(Realm::Public, &[]).unwrap();
+                let mut repository = LocalRepository::open(&database).unwrap();
+                super::arm_test_process_kill();
+                repository
+                    .import_bundle(&bundle.manifest_bytes, &bundle.objects, &[])
+                    .unwrap();
+            }
+            other => panic!("unknown process-kill operation {other}"),
+        }
+        panic!("operation completed without reaching its requested process-kill point");
+    }
+
+    #[test]
+    fn process_kill_at_local_transaction_write_points_preserves_atomic_state() {
+        for (operation, points) in [
+            (
+                "init",
+                &[
+                    "init.after_artifact",
+                    "init.after_repository",
+                    "init.after_commit",
+                ][..],
+            ),
+            (
+                "snapshot",
+                &[
+                    "snapshot.after_root_delete",
+                    "snapshot.after_blob",
+                    "snapshot.after_tree",
+                    "snapshot.after_root",
+                    "snapshot.after_commit",
+                ][..],
+            ),
+            (
+                "checkpoint",
+                &[
+                    "checkpoint.after_change",
+                    "checkpoint.after_signature",
+                    "checkpoint.after_ref",
+                    "checkpoint.after_commit",
+                ][..],
+            ),
+            (
+                "import",
+                &[
+                    "import.after_artifact",
+                    "import.after_repository",
+                    "import.after_blob",
+                    "import.after_signature",
+                    "import.after_ref",
+                    "import.after_commit",
+                ][..],
+            ),
+        ] {
+            for point in points {
+                run_process_kill_case(operation, point);
+            }
+        }
     }
 
     #[test]

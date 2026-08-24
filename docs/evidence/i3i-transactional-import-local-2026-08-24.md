@@ -2,10 +2,10 @@
 
 - Increment: I3i, empty-repository portable restore
 - Base commit: `2c33a2bdd43f1c878de52fe23ed2cf0767a7c7f9`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `16a440de74c93b22b336e22083ea144bfe73649e`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local implementation and full verification pass; commit and CI
-  confirmation pending
+- Result: local implementation and full verification pass; commit, push, and
+  GitHub Actions CI confirmed by the user
 
 ## Demonstrated slice
 
