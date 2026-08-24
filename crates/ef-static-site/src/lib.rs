@@ -17,6 +17,15 @@ use serde::Serialize;
 /// Maximum number of logical records rendered into one HTML page.
 pub const PAGE_SIZE: usize = 100;
 
+/// Maximum current-tree content records packed into one static HTML asset.
+pub const CONTENT_CHUNK_RECORDS: usize = 100;
+
+/// Maximum rendered content-section bytes packed into one static HTML asset.
+pub const CONTENT_CHUNK_BODY_BYTES: usize = 1024 * 1024;
+
+/// Maximum raw UTF-8 file bytes embedded in the static snapshot.
+pub const INLINE_TEXT_LIMIT_BYTES: usize = 64 * 1024;
+
 /// A complete static output tree, keyed by portable relative path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StaticSite {
@@ -49,6 +58,32 @@ struct FileEntry {
     mode: TreeEntryMode,
     target: String,
     bytes: Option<usize>,
+    content_href: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct ContentSection {
+    id: String,
+    html: String,
+    inline: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ContentChunk {
+    path: String,
+    sections: Vec<ContentSection>,
+    body_bytes: usize,
+}
+
+struct RenderModel<'a> {
+    name: &'a str,
+    project: &'a str,
+    semantic_root: &'a str,
+    history: &'a [(String, &'a ChangeArtifact)],
+    current_files: &'a [FileEntry],
+    history_pages: &'a [String],
+    file_pages: &'a [String],
+    content_chunks: &'a [ContentChunk],
 }
 
 type DecodedGraph = (
@@ -89,14 +124,27 @@ struct PayloadManifest {
     addressing: &'static str,
     object_count: usize,
     total_bytes: usize,
+    inline_text_limit_bytes: usize,
+    inline_text_objects: usize,
+    external_objects: usize,
+    chunk_record_limit: usize,
+    chunk_body_limit_bytes: usize,
+    chunks: Vec<ContentChunkManifest>,
+}
+
+#[derive(Serialize)]
+struct ContentChunkManifest {
+    path: String,
+    objects: usize,
+    body_bytes: usize,
 }
 
 /// Builds a byte-reproducible, read-only website from exactly one public bundle.
 ///
-/// The bundle is deeply verified before any projection occurs. Raw blob bodies
-/// are intentionally not emitted as individual assets; the manifest records an
-/// external content-addressed delivery boundary for a later R2 or equivalent
-/// host integration.
+/// The bundle is deeply verified before any projection occurs. Small current
+/// UTF-8 files are packed into bounded HTML chunks instead of one asset per
+/// blob. Other blob bodies remain behind a content-addressed delivery boundary
+/// for a later R2 or equivalent host integration.
 ///
 /// # Errors
 ///
@@ -141,49 +189,33 @@ fn project_site(
         &mut current_files,
     )?;
 
+    let content_chunks = build_content_chunks(&mut current_files, objects)?;
+    let inline_ids = content_chunks
+        .iter()
+        .flat_map(|chunk| &chunk.sections)
+        .filter(|section| section.inline)
+        .map(|section| section.id.as_str())
+        .collect::<BTreeSet<_>>();
+
     let history_pages = page_paths("history", history.len());
     let file_pages = page_paths("files", current_files.len());
-    let mut files = BTreeMap::new();
-    files.insert("assets/site.css".into(), SITE_CSS.as_bytes().to_vec());
-    files.insert("_headers".into(), SECURITY_HEADERS.as_bytes().to_vec());
-    files.insert(
-        "index.html".into(),
-        render_index(
-            &genesis.name,
-            verified.project(),
-            verified.semantic_root(),
-            history.len(),
-            current_files.len(),
-            &history_pages[0],
-            &file_pages[0],
-        )
-        .into_bytes(),
-    );
-    files.insert(
-        "404.html".into(),
-        render_not_found(&genesis.name).into_bytes(),
-    );
-    for (index, chunk) in history.chunks(PAGE_SIZE).enumerate() {
-        files.insert(
-            history_pages[index].clone(),
-            render_history_page(&genesis.name, chunk, index, history_pages.len()).into_bytes(),
-        );
-    }
-    if history.is_empty() {
-        unreachable!("verified bundle has a head");
-    }
-    for (index, chunk) in current_files.chunks(PAGE_SIZE).enumerate() {
-        files.insert(
-            file_pages[index].clone(),
-            render_file_page(&genesis.name, chunk, index, file_pages.len()).into_bytes(),
-        );
-    }
-    if current_files.is_empty() {
-        files.insert(
-            file_pages[0].clone(),
-            render_file_page(&genesis.name, &[], 0, 1).into_bytes(),
-        );
-    }
+    let mut files = render_site_files(&RenderModel {
+        name: &genesis.name,
+        project: verified.project(),
+        semantic_root: verified.semantic_root(),
+        history: &history,
+        current_files: &current_files,
+        history_pages: &history_pages,
+        file_pages: &file_pages,
+        content_chunks: &content_chunks,
+    });
+    let total_bytes = manifest
+        .blobs
+        .iter()
+        .map(|id| blob_body(objects, id).map(Vec::len))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .sum();
     let site_manifest = SiteManifest {
         format: "edgefossil-static-site",
         version: 0,
@@ -201,17 +233,24 @@ fn project_site(
             file_pages,
         },
         payloads: PayloadManifest {
-            content_included: false,
-            delivery: "external-content-addressed",
+            content_included: !inline_ids.is_empty(),
+            delivery: "bounded-static-chunks",
             addressing: "artifact-id",
             object_count: manifest.blobs.len(),
-            total_bytes: manifest
-                .blobs
+            total_bytes,
+            inline_text_limit_bytes: INLINE_TEXT_LIMIT_BYTES,
+            inline_text_objects: inline_ids.len(),
+            external_objects: manifest.blobs.len() - inline_ids.len(),
+            chunk_record_limit: CONTENT_CHUNK_RECORDS,
+            chunk_body_limit_bytes: CONTENT_CHUNK_BODY_BYTES,
+            chunks: content_chunks
                 .iter()
-                .map(|id| blob_body(objects, id).map(Vec::len))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .sum(),
+                .map(|chunk| ContentChunkManifest {
+                    path: chunk.path.clone(),
+                    objects: chunk.sections.len(),
+                    body_bytes: chunk.body_bytes,
+                })
+                .collect(),
         },
     };
     let mut encoded_manifest = serde_json::to_vec_pretty(&site_manifest)
@@ -224,6 +263,39 @@ fn project_site(
         semantic_root: verified.semantic_root().to_owned(),
         files,
     })
+}
+
+fn render_site_files(model: &RenderModel<'_>) -> BTreeMap<String, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    files.insert("assets/site.css".into(), SITE_CSS.as_bytes().to_vec());
+    files.insert("_headers".into(), SECURITY_HEADERS.as_bytes().to_vec());
+    files.insert("index.html".into(), render_index(model).into_bytes());
+    files.insert("404.html".into(), render_not_found(model.name).into_bytes());
+    for (index, chunk) in model.history.chunks(PAGE_SIZE).enumerate() {
+        files.insert(
+            model.history_pages[index].clone(),
+            render_history_page(model.name, chunk, index, model.history_pages.len()).into_bytes(),
+        );
+    }
+    for (index, chunk) in model.current_files.chunks(PAGE_SIZE).enumerate() {
+        files.insert(
+            model.file_pages[index].clone(),
+            render_file_page(model.name, chunk, index, model.file_pages.len()).into_bytes(),
+        );
+    }
+    if model.current_files.is_empty() {
+        files.insert(
+            model.file_pages[0].clone(),
+            render_file_page(model.name, &[], 0, 1).into_bytes(),
+        );
+    }
+    for chunk in model.content_chunks {
+        files.insert(
+            chunk.path.clone(),
+            render_content_page(model.name, chunk).into_bytes(),
+        );
+    }
+    files
 }
 
 fn decode_graph(
@@ -301,6 +373,7 @@ fn flatten_tree(
                     mode: entry.mode,
                     target: entry.target.clone(),
                     bytes: None,
+                    content_href: None,
                 });
                 flatten_tree(&entry.target, &path, trees, objects, active, output)?;
             }
@@ -309,17 +382,130 @@ fn flatten_tree(
                 mode: entry.mode,
                 target: entry.target.clone(),
                 bytes: Some(blob_body(objects, &entry.target)?.len()),
+                content_href: None,
             }),
             TreeEntryMode::Symlink => output.push(FileEntry {
                 path,
                 mode: entry.mode,
                 target: entry.target.clone(),
                 bytes: None,
+                content_href: None,
             }),
         }
     }
     active.remove(tree_id);
     Ok(())
+}
+
+fn build_content_chunks(
+    files: &mut [FileEntry],
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<ContentChunk>, StaticSiteError> {
+    let mut paths_by_blob = BTreeMap::<String, Vec<String>>::new();
+    for file in files.iter().filter(|file| file.bytes.is_some()) {
+        paths_by_blob
+            .entry(file.target.clone())
+            .or_default()
+            .push(file.path.clone());
+    }
+
+    let mut chunks = Vec::new();
+    let mut pending = Vec::new();
+    let mut pending_bytes = 0;
+    for (id, paths) in paths_by_blob {
+        let body = blob_body(objects, &id)?;
+        let section = content_section(&id, &paths, body);
+        let section_bytes = section.html.len();
+        if section_bytes > CONTENT_CHUNK_BODY_BYTES {
+            return Err(StaticSiteError::new(format!(
+                "rendered content record exceeds chunk limit: {id}"
+            )));
+        }
+        if !pending.is_empty()
+            && (pending.len() == CONTENT_CHUNK_RECORDS
+                || pending_bytes + section_bytes > CONTENT_CHUNK_BODY_BYTES)
+        {
+            chunks.push(finish_content_chunk(chunks.len(), pending, pending_bytes));
+            pending = Vec::new();
+            pending_bytes = 0;
+        }
+        pending_bytes += section_bytes;
+        pending.push(section);
+    }
+    if !pending.is_empty() {
+        chunks.push(finish_content_chunk(chunks.len(), pending, pending_bytes));
+    }
+
+    let href_by_blob = chunks
+        .iter()
+        .flat_map(|chunk| {
+            chunk.sections.iter().map(|section| {
+                (
+                    section.id.as_str(),
+                    format!("../{}#{}", chunk.path, content_anchor(&section.id)),
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
+    for file in files.iter_mut().filter(|file| file.bytes.is_some()) {
+        file.content_href = href_by_blob.get(file.target.as_str()).cloned();
+    }
+    Ok(chunks)
+}
+
+fn content_section(id: &str, paths: &[String], body: &[u8]) -> ContentSection {
+    let displayable = body.len() <= INLINE_TEXT_LIMIT_BYTES
+        && std::str::from_utf8(body).is_ok_and(|text| {
+            !text
+                .chars()
+                .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        });
+    let first_path = paths.first().expect("content always has a current path");
+    let path_list = if paths.len() == 1 {
+        format!("<code>{}</code>", escape_html(first_path))
+    } else {
+        format!(
+            "<code>{}</code> (+{} aliases)",
+            escape_html(first_path),
+            paths.len() - 1
+        )
+    };
+    let content = if displayable {
+        format!(
+            "<pre>{}</pre>",
+            escape_html(std::str::from_utf8(body).expect("displayable UTF-8 was checked"))
+        )
+    } else {
+        "<p class=\"external\">Content is not embedded in this snapshot; retrieve it by artifact ID from an authorized content store.</p>".into()
+    };
+    ContentSection {
+        id: id.to_owned(),
+        html: format!(
+            "<section class=\"content\" id=\"{}\"><h2>{}</h2><p>{} bytes · <code>{}</code></p>{}</section>",
+            content_anchor(id),
+            path_list,
+            body.len(),
+            escape_html(id),
+            content
+        ),
+        inline: displayable,
+    }
+}
+
+fn finish_content_chunk(
+    index: usize,
+    sections: Vec<ContentSection>,
+    body_bytes: usize,
+) -> ContentChunk {
+    ContentChunk {
+        path: format!("content/chunk-{:04}.html", index + 1),
+        sections,
+        body_bytes,
+    }
+}
+
+fn content_anchor(id: &str) -> String {
+    format!("blob-{}", id.strip_prefix("sha256:").unwrap_or(id))
 }
 
 fn artifact_body<'a>(
@@ -357,27 +543,35 @@ fn page_paths(section: &str, item_count: usize) -> Vec<String> {
         .collect()
 }
 
-fn render_index(
-    name: &str,
-    project: &str,
-    semantic_root: &str,
-    history_count: usize,
-    file_count: usize,
-    history_link: &str,
-    file_link: &str,
-) -> String {
+fn render_index(model: &RenderModel<'_>) -> String {
     format!(
-        "{}<main><p class=\"eyebrow\">EdgeFossil public snapshot</p><h1>{}</h1><dl><dt>Project</dt><dd><code>{}</code></dd><dt>Semantic root</dt><dd><code>{}</code></dd></dl><nav><a href=\"{}\">History <strong>{}</strong></a><a href=\"{}\">Files <strong>{}</strong></a></nav></main>{}",
-        page_head(name, "assets/site.css"),
-        escape_html(name),
-        escape_html(project),
-        escape_html(semantic_root),
-        history_link,
-        history_count,
-        file_link,
-        file_count,
+        "{}<main><p class=\"eyebrow\">EdgeFossil public snapshot</p><h1>{}</h1><dl><dt>Project</dt><dd><code>{}</code></dd><dt>Semantic root</dt><dd><code>{}</code></dd></dl><nav><a href=\"{}\">History <strong>{}</strong></a><a href=\"{}\">Files <strong>{}</strong></a></nav><section class=\"timeline\"><p class=\"eyebrow\">Recent timeline</p>{}</section></main>{}",
+        page_head(model.name, "assets/site.css"),
+        escape_html(model.name),
+        escape_html(model.project),
+        escape_html(model.semantic_root),
+        model.history_pages[0],
+        model.history.len(),
+        model.file_pages[0],
+        model.current_files.len(),
+        render_timeline(model.history),
         PAGE_FOOT
     )
+}
+
+fn render_timeline(history: &[(String, &ChangeArtifact)]) -> String {
+    let mut rows = String::new();
+    for (id, change) in history.iter().take(5) {
+        let _ = write!(
+            rows,
+            "<article><h2>{}</h2><p><time>{}</time> · logical clock {}</p><code>{}</code></article>",
+            escape_html(&change.message),
+            escape_html(&change.meta.created_at),
+            change.meta.logical_clock,
+            escape_html(id)
+        );
+    }
+    rows
 }
 
 fn render_not_found(name: &str) -> String {
@@ -431,10 +625,20 @@ fn render_file_page(name: &str, entries: &[FileEntry], page: usize, pages: usize
             || entry.target.clone(),
             |bytes| format!("{bytes} bytes · {}", entry.target),
         );
+        let path = entry.content_href.as_ref().map_or_else(
+            || format!("<code>{}</code>", escape_html(&entry.path)),
+            |href| {
+                format!(
+                    "<a href=\"{}\"><code>{}</code></a>",
+                    escape_html(href),
+                    escape_html(&entry.path)
+                )
+            },
+        );
         let _ = write!(
             rows,
-            "<tr><td><code>{}</code></td><td>{}</td><td><code>{}</code></td></tr>",
-            escape_html(&entry.path),
+            "<tr><td>{}</td><td>{}</td><td><code>{}</code></td></tr>",
+            path,
             mode,
             escape_html(&detail)
         );
@@ -447,6 +651,22 @@ fn render_file_page(name: &str, entries: &[FileEntry], page: usize, pages: usize
         escape_html(name),
         rows,
         pagination("files", page, pages),
+        PAGE_FOOT
+    )
+}
+
+fn render_content_page(name: &str, chunk: &ContentChunk) -> String {
+    let body = chunk
+        .sections
+        .iter()
+        .map(|section| section.html.as_str())
+        .collect::<String>();
+    format!(
+        "{}<main><a href=\"../index.html\">← Project</a><p class=\"eyebrow\">File contents · {} objects</p><h1>{}</h1>{}</main>{}",
+        page_head(name, "../assets/site.css"),
+        chunk.sections.len(),
+        escape_html(name),
+        body,
         PAGE_FOOT
     )
 }
@@ -493,7 +713,7 @@ fn escape_html(value: &str) -> String {
 const PAGE_FOOT: &str =
     "<footer>Generated from a deeply verified public bundle. Read-only.</footer></body></html>\n";
 const SECURITY_HEADERS: &str = "/*\n  Content-Security-Policy: default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'\n  Referrer-Policy: no-referrer\n  X-Content-Type-Options: nosniff\n";
-const SITE_CSS: &str = "*{box-sizing:border-box}body{font-family:ui-sans-serif,system-ui,sans-serif;line-height:1.55;margin:0;color:#17211b;background:#f5f7f3}main,footer{max-width:72rem;margin:auto;padding:2rem}h1{font-size:clamp(2rem,6vw,4rem);margin:.2rem 0 2rem}.eyebrow{letter-spacing:.12em;text-transform:uppercase;color:#476254}dl{display:grid;grid-template-columns:max-content 1fr;gap:.6rem 1rem}dd{margin:0;overflow-wrap:anywhere}nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem;margin-top:3rem}nav a,article{border:1px solid #aebbb3;border-radius:.6rem;padding:1rem;background:#fff}nav strong{display:block;font-size:2rem}a{color:#16643b}article{margin:1rem 0}article h2{margin:0}code{overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;background:#fff}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #ccd4cf;padding:.7rem}.pager{min-height:1.5rem}footer{color:#5b685f}@media(prefers-color-scheme:dark){body{color:#e8eee9;background:#111713}nav a,article,table{background:#18211b;border-color:#46534a}a{color:#8ee3ae}th,td{border-color:#46534a}}\n";
+const SITE_CSS: &str = "*{box-sizing:border-box}body{font-family:ui-sans-serif,system-ui,sans-serif;line-height:1.55;margin:0;color:#17211b;background:#f5f7f3}main,footer{max-width:72rem;margin:auto;padding:2rem}h1{font-size:clamp(2rem,6vw,4rem);margin:.2rem 0 2rem}.eyebrow{letter-spacing:.12em;text-transform:uppercase;color:#476254}dl{display:grid;grid-template-columns:max-content 1fr;gap:.6rem 1rem}dd{margin:0;overflow-wrap:anywhere}nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem;margin-top:3rem}nav a,article,.content{border:1px solid #aebbb3;border-radius:.6rem;padding:1rem;background:#fff}nav strong{display:block;font-size:2rem}a{color:#16643b}article,.content{margin:1rem 0}article h2,.content h2{margin:0;overflow-wrap:anywhere}code{overflow-wrap:anywhere}pre{overflow:auto;padding:1rem;background:#edf1ed;border-radius:.4rem}.external{border-left:.25rem solid #b36b00;padding-left:1rem}table{width:100%;border-collapse:collapse;background:#fff}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #ccd4cf;padding:.7rem}.pager{min-height:1.5rem}footer{color:#5b685f}@media(prefers-color-scheme:dark){body{color:#e8eee9;background:#111713}nav a,article,.content,table{background:#18211b;border-color:#46534a}pre{background:#101611}a{color:#8ee3ae}th,td{border-color:#46534a}}\n";
 
 #[cfg(test)]
 mod tests {
@@ -505,7 +725,10 @@ mod tests {
     };
     use ef_store_sqlite::{LocalRepository, PortableBundle};
 
-    use super::{PAGE_SIZE, build_public_site};
+    use super::{
+        CONTENT_CHUNK_BODY_BYTES, CONTENT_CHUNK_RECORDS, INLINE_TEXT_LIMIT_BYTES, PAGE_SIZE,
+        build_public_site,
+    };
 
     fn sign(key: &SigningKey, artifact: &str) -> SignatureRecord {
         SignatureRecord {
@@ -532,11 +755,39 @@ mod tests {
                 path: format!("public/file-{index:03}.txt"),
                 realm: Realm::Public,
                 kind: SnapshotInputKind::File {
-                    bytes: format!("public-{index}").into_bytes(),
+                    bytes: if index == 0 {
+                        b"public <script>safe</script>".to_vec()
+                    } else {
+                        format!("public-{index}").into_bytes()
+                    },
                     executable: false,
                 },
             })
             .collect::<Vec<_>>();
+        inputs.push(SnapshotInput {
+            path: "public/binary.bin".into(),
+            realm: Realm::Public,
+            kind: SnapshotInputKind::File {
+                bytes: vec![0, 1, 2, 255],
+                executable: false,
+            },
+        });
+        inputs.push(SnapshotInput {
+            path: "public/alias.txt".into(),
+            realm: Realm::Public,
+            kind: SnapshotInputKind::File {
+                bytes: b"public-1".to_vec(),
+                executable: false,
+            },
+        });
+        inputs.push(SnapshotInput {
+            path: "public/large.txt".into(),
+            realm: Realm::Public,
+            kind: SnapshotInputKind::File {
+                bytes: vec![b'L'; INLINE_TEXT_LIMIT_BYTES + 1],
+                executable: false,
+            },
+        });
         inputs.push(SnapshotInput {
             path: "members/secret.txt".into(),
             realm: Realm::Members,
@@ -590,6 +841,8 @@ mod tests {
         let second = build_public_site(&public.manifest_bytes, &public.objects).unwrap();
         assert_eq!(first, second);
         assert!(first.files.contains_key("files/page-0003.html"));
+        assert!(first.files.contains_key("content/chunk-0003.html"));
+        assert!(!first.files.contains_key("content/chunk-0004.html"));
         assert!(first.files.contains_key("404.html"));
         assert!(!first.files.keys().any(|path| path.starts_with("blobs/")));
         let joined = first
@@ -602,6 +855,30 @@ mod tests {
         assert!(!text.contains("local-private-marker"));
         assert!(text.contains("Static &lt;project&gt;"));
         assert!(text.contains("publish &lt;safe&gt;"));
+        assert!(text.contains("public &lt;script&gt;safe&lt;/script&gt;"));
+        assert!(!text.contains("public <script>safe</script>"));
+        assert!(text.contains("Recent timeline"));
+        assert!(text.contains("Content is not embedded in this snapshot"));
+        assert!(text.contains("(+1 aliases)"));
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&first.files["edgefossil-site.json"]).unwrap();
+        assert_eq!(manifest["payloads"]["delivery"], "bounded-static-chunks");
+        assert_eq!(manifest["payloads"]["inline_text_objects"], 205);
+        assert_eq!(manifest["payloads"]["external_objects"], 2);
+        assert_eq!(
+            manifest["payloads"]["chunk_record_limit"],
+            CONTENT_CHUNK_RECORDS
+        );
+        assert_eq!(
+            manifest["payloads"]["chunk_body_limit_bytes"],
+            CONTENT_CHUNK_BODY_BYTES
+        );
+        assert_eq!(manifest["payloads"]["chunks"].as_array().unwrap().len(), 3);
+        for chunk in manifest["payloads"]["chunks"].as_array().unwrap() {
+            assert!(chunk["objects"].as_u64().unwrap() <= CONTENT_CHUNK_RECORDS as u64);
+            assert!(chunk["body_bytes"].as_u64().unwrap() <= CONTENT_CHUNK_BODY_BYTES as u64);
+        }
     }
 
     #[test]

@@ -202,8 +202,25 @@ try {
   expect(files.status === 200, "files status is not 200");
   expect(filesBody.includes("README.md"), "public file metadata is missing");
   expect(
+    filesBody.includes("../content/chunk-0001.html#blob-"),
+    "public file content link is missing",
+  );
+  expect(
     !filesBody.includes("local-smoke-secret"),
     "local content leaked into files",
+  );
+
+  const content = await fetch(`${origin}/content/chunk-0001.html`);
+  const contentBody = await content.text();
+  expect(content.status === 200, "content chunk status is not 200");
+  expect(
+    contentBody.includes("public smoke content"),
+    "public file content is missing",
+  );
+  expect(
+    !contentBody.includes("members-smoke-secret") &&
+      !contentBody.includes("local-smoke-secret"),
+    "restricted content leaked into content chunk",
   );
 
   const manifestResponse = await fetch(`${origin}/edgefossil-site.json`);
@@ -214,8 +231,16 @@ try {
     "site manifest realm is not public",
   );
   expect(
-    manifest.payloads?.delivery === "external-content-addressed",
-    "payload delivery boundary is missing",
+    manifest.payloads?.delivery === "bounded-static-chunks",
+    "bounded payload delivery is missing",
+  );
+  expect(
+    manifest.payloads?.inline_text_objects === 1,
+    "inline object count differs",
+  );
+  expect(
+    manifest.payloads?.chunks?.length === 1,
+    "content chunk count differs",
   );
 
   const missing = await fetch(`${origin}/definitely-missing`);

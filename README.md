@@ -108,9 +108,11 @@ portable state into an empty repository in public→members→local order. It do
 not restore signing secrets, tracking rules, or unsigned working snapshots.
 `static-build` deeply verifies exactly one public bundle and atomically creates
 a deterministic read-only HTML site. History and current-file metadata are
-paged; raw blobs are deliberately not emitted as one asset per object. The
-output works without JavaScript, a Worker script, or Cloudflare. Content hunks,
-file-content viewing, and historical-change diff are not implemented yet.
+paged, and the index includes a recent timeline. Small current UTF-8 files are
+linked from file rows and packed into bounded HTML chunks; binary, large, and
+historical-only blobs remain external by artifact ID rather than becoming one
+asset per object. The output works without JavaScript, a Worker script, or
+Cloudflare. Content hunks and historical-change diff are not implemented yet.
 
 The assets-only Cloudflare profile is separate from the dynamic Worker. To
 preview an intentionally generated site locally, choose a non-existing ignored
