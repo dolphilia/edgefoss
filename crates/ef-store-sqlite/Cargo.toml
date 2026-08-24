@@ -8,6 +8,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+edgefoss-core = { path = "../edgefoss-core" }
 ef-format = { path = "../ef-format" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 

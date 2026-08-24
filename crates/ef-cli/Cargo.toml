@@ -12,6 +12,7 @@ name = "ef"
 path = "src/main.rs"
 
 [dependencies]
+edgefoss-core = { path = "../edgefoss-core" }
 ef-format = { path = "../ef-format" }
 ef-store-sqlite = { path = "../ef-store-sqlite" }
 getrandom = "0.4.3"

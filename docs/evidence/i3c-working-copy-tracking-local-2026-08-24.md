@@ -1,10 +1,9 @@
 # I3c working-copy tracking evidence — 2026-08-24
 
 - Increment: I3c, local tracking intent and explanation
-- Base commit: `c4b6115b267d600f9fce262e4d3bd17411f7366b`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `e65344d6ef62435cf336078932d85e2e3f389e1e`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: pass; account owner confirmed GitHub Actions success
 
 ## Demonstrated slice
 

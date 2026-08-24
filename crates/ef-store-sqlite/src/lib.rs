@@ -2,15 +2,18 @@
 
 use std::{error::Error, fmt, path::Path};
 
+use edgefoss_core::BuiltRealmSnapshot;
 use ef_format::{
-    FormatError, PathError, ProjectGenesis, Realm, artifact_id, decode_project_genesis,
-    encode_project_genesis, parse_artifact_id, validate_path, verify_artifact_id,
+    FormatError, PathError, ProjectGenesis, Realm, TreeEntryMode, artifact_id,
+    decode_project_genesis, encode_project_genesis, encode_tree, parse_artifact_id, validate_path,
+    verify_artifact_id,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const MIGRATION_1: &str = include_str!("../migrations/0001_repository_identity.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_working_copy_tracking.sql");
+const MIGRATION_3: &str = include_str!("../migrations/0003_working_snapshots.sql");
 
 /// Storage failure with a stable distinction for initialization conflicts.
 #[derive(Debug)]
@@ -21,6 +24,7 @@ pub enum StoreError {
     AlreadyInitialized,
     Uninitialized,
     InvalidTracking(String),
+    InvalidSnapshot(String),
     Corrupt(String),
 }
 
@@ -35,6 +39,7 @@ impl fmt::Display for StoreError {
             }
             Self::Uninitialized => formatter.write_str("repository is not initialized"),
             Self::InvalidTracking(message) => write!(formatter, "invalid tracking rule: {message}"),
+            Self::InvalidSnapshot(message) => write!(formatter, "invalid snapshot: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
     }
@@ -49,6 +54,7 @@ impl Error for StoreError {
             Self::AlreadyInitialized
             | Self::Uninitialized
             | Self::InvalidTracking(_)
+            | Self::InvalidSnapshot(_)
             | Self::Corrupt(_) => None,
         }
     }
@@ -207,6 +213,14 @@ pub struct TrackingCounts {
     pub project: usize,
 }
 
+/// One currently selected, unsigned working snapshot root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SnapshotRoot {
+    pub realm: Realm,
+    pub id: String,
+    pub captured_at: String,
+}
+
 /// One open local repository database.
 pub struct LocalRepository {
     connection: Connection,
@@ -253,6 +267,7 @@ impl LocalRepository {
             let migration = match version {
                 0 => MIGRATION_1,
                 1 => MIGRATION_2,
+                2 => MIGRATION_3,
                 SCHEMA_VERSION => return Ok(()),
                 other => {
                     return Err(StoreError::Corrupt(format!(
@@ -546,6 +561,96 @@ impl LocalRepository {
         Ok(counts)
     }
 
+    /// Atomically stores all objects and replaces every realm's working root.
+    ///
+    /// Existing content-addressed objects remain available, while realms absent
+    /// from `snapshots` have their prior working roots cleared.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without advancing any root if IDs, metadata, realm
+    /// ownership, dependencies, or storage constraints are invalid.
+    pub fn replace_working_snapshots(
+        &mut self,
+        snapshots: &[BuiltRealmSnapshot],
+        captured_at: &str,
+    ) -> Result<(), StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let project = ef_format::format_artifact_id(&project_id);
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let mut seen_realms = std::collections::HashSet::new();
+        for snapshot in snapshots {
+            if !seen_realms.insert(snapshot.realm.as_str()) {
+                return Err(StoreError::InvalidSnapshot(format!(
+                    "duplicate {} realm",
+                    snapshot.realm.as_str()
+                )));
+            }
+            if snapshot.trees.last().map(|tree| tree.id.as_str()) != Some(snapshot.root.as_str()) {
+                return Err(StoreError::InvalidSnapshot(
+                    "root must be the last child-first tree".into(),
+                ));
+            }
+        }
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "DELETE FROM working_snapshot_roots WHERE project_id = ?1",
+            params![project_id.as_slice()],
+        )?;
+        for snapshot in snapshots {
+            store_snapshot_blobs(&transaction, &project_id, snapshot)?;
+            store_snapshot_trees(
+                &transaction,
+                &project_id,
+                &project,
+                genesis.actor_key,
+                &genesis.created_at,
+                snapshot,
+            )?;
+            store_snapshot_root(&transaction, &project_id, captured_at, snapshot)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Returns current unsigned working roots in disclosure order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for uninitialized or malformed stored state.
+    pub fn working_snapshot_roots(&self) -> Result<Vec<SnapshotRoot>, StoreError> {
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        let mut statement = self.connection.prepare(
+            "SELECT realm, root_id, captured_at
+             FROM working_snapshot_roots
+             WHERE project_id = ?1
+             ORDER BY CASE realm WHEN 'public' THEN 0 WHEN 'members' THEN 1 ELSE 2 END",
+        )?;
+        let rows = statement.query_map(params![project_id.as_slice()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (realm, digest, captured_at) = row?;
+            let realm = parse_realm(&realm)?;
+            let digest: [u8; 32] = digest
+                .try_into()
+                .map_err(|_| StoreError::Corrupt("snapshot root is not 32 bytes".into()))?;
+            Ok(SnapshotRoot {
+                realm,
+                id: ef_format::format_artifact_id(&digest),
+                captured_at,
+            })
+        })
+        .collect()
+    }
+
     fn project_digest(&self) -> Result<Option<[u8; 32]>, StoreError> {
         let digest = self
             .connection
@@ -588,6 +693,222 @@ fn decode_tracking_rule(
         .map_err(|error| StoreError::Corrupt(error.to_string()))
 }
 
+fn parse_realm(value: &str) -> Result<Realm, StoreError> {
+    match value {
+        "public" => Ok(Realm::Public),
+        "members" => Ok(Realm::Members),
+        "local" => Ok(Realm::Local),
+        _ => Err(StoreError::Corrupt(format!("unknown realm {value}"))),
+    }
+}
+
+fn store_snapshot_blobs(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    snapshot: &BuiltRealmSnapshot,
+) -> Result<(), StoreError> {
+    for blob in &snapshot.blobs {
+        verify_artifact_id(&blob.bytes, &blob.id)?;
+        let digest = parse_artifact_id(&blob.id)?;
+        transaction.execute(
+            "INSERT INTO blobs(project_id, realm, digest, content)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(project_id, realm, digest) DO NOTHING",
+            params![
+                project_id.as_slice(),
+                snapshot.realm.as_str(),
+                digest.as_slice(),
+                blob.bytes
+            ],
+        )?;
+        let existing: Vec<u8> = transaction.query_row(
+            "SELECT content FROM blobs
+             WHERE project_id = ?1 AND realm = ?2 AND digest = ?3",
+            params![
+                project_id.as_slice(),
+                snapshot.realm.as_str(),
+                digest.as_slice()
+            ],
+            |row| row.get(0),
+        )?;
+        if existing != blob.bytes {
+            return Err(StoreError::Corrupt("blob digest collision".into()));
+        }
+    }
+    Ok(())
+}
+
+fn store_snapshot_trees(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    project: &str,
+    actor_key: [u8; 32],
+    captured_at: &str,
+    snapshot: &BuiltRealmSnapshot,
+) -> Result<(), StoreError> {
+    for tree in &snapshot.trees {
+        if tree.artifact.meta.project != project
+            || tree.artifact.meta.realm != snapshot.realm
+            || tree.artifact.meta.actor_key != actor_key
+            || tree.artifact.meta.logical_clock != 0
+            || tree.artifact.meta.created_at != captured_at
+        {
+            return Err(StoreError::InvalidSnapshot(
+                "tree metadata does not match the working snapshot".into(),
+            ));
+        }
+        let body = encode_tree(&tree.artifact)?;
+        verify_artifact_id(&body, &tree.id)?;
+        require_tree_entries(
+            transaction,
+            project_id,
+            snapshot.realm,
+            &tree.artifact.entries,
+        )?;
+        store_tree_body(transaction, project_id, snapshot.realm, &tree.id, &body)?;
+    }
+    Ok(())
+}
+
+fn require_tree_entries(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    realm: Realm,
+    entries: &[ef_format::TreeEntry],
+) -> Result<(), StoreError> {
+    for entry in entries {
+        match entry.mode {
+            TreeEntryMode::File | TreeEntryMode::Executable => {
+                require_blob(transaction, project_id, realm, &entry.target)?;
+            }
+            TreeEntryMode::Directory => {
+                require_tree(transaction, project_id, realm, &entry.target)?;
+            }
+            TreeEntryMode::Symlink => {}
+        }
+    }
+    Ok(())
+}
+
+fn store_tree_body(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    realm: Realm,
+    id: &str,
+    body: &[u8],
+) -> Result<(), StoreError> {
+    let digest = parse_artifact_id(id)?;
+    transaction.execute(
+        "INSERT INTO artifacts(
+             id, project_id, realm, kind, schema_version, canonical_body
+         ) VALUES (?1, ?2, ?3, 'tree', 0, ?4)
+         ON CONFLICT(id) DO NOTHING",
+        params![
+            digest.as_slice(),
+            project_id.as_slice(),
+            realm.as_str(),
+            body
+        ],
+    )?;
+    let existing: (Vec<u8>, String, String, i64, Vec<u8>) = transaction.query_row(
+        "SELECT project_id, realm, kind, schema_version, canonical_body
+         FROM artifacts WHERE id = ?1",
+        params![digest.as_slice()],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    if existing.0.as_slice() != project_id
+        || existing.1 != realm.as_str()
+        || existing.2 != "tree"
+        || existing.3 != 0
+        || existing.4 != body
+    {
+        return Err(StoreError::Corrupt(
+            "tree artifact ID is bound to different content".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn store_snapshot_root(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    captured_at: &str,
+    snapshot: &BuiltRealmSnapshot,
+) -> Result<(), StoreError> {
+    let root = parse_artifact_id(&snapshot.root)?;
+    require_tree(transaction, project_id, snapshot.realm, &snapshot.root)?;
+    transaction.execute(
+        "INSERT INTO working_snapshot_roots(project_id, realm, root_id, captured_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            project_id.as_slice(),
+            snapshot.realm.as_str(),
+            root.as_slice(),
+            captured_at
+        ],
+    )?;
+    Ok(())
+}
+
+fn require_blob(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    realm: Realm,
+    id: &str,
+) -> Result<(), StoreError> {
+    let digest = parse_artifact_id(id)?;
+    let exists = transaction
+        .query_row(
+            "SELECT 1 FROM blobs
+             WHERE project_id = ?1 AND realm = ?2 AND digest = ?3",
+            params![project_id.as_slice(), realm.as_str(), digest.as_slice()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(StoreError::InvalidSnapshot(format!(
+            "missing {} blob {id}",
+            realm.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn require_tree(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    realm: Realm,
+    id: &str,
+) -> Result<(), StoreError> {
+    let digest = parse_artifact_id(id)?;
+    let exists = transaction
+        .query_row(
+            "SELECT 1 FROM artifacts
+             WHERE id = ?1 AND project_id = ?2 AND realm = ?3
+               AND kind = 'tree' AND schema_version = 0",
+            params![digest.as_slice(), project_id.as_slice(), realm.as_str()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(StoreError::InvalidSnapshot(format!(
+            "missing {} tree {id}",
+            realm.as_str()
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf};
@@ -596,8 +917,9 @@ mod tests {
         LocalRepository, MIGRATION_1, SCHEMA_VERSION, StoreError, TrackingCounts, TrackingMode,
         TrackingRule, TrackingScope,
     };
+    use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
     use ef_format::{
-        ProjectGenesis, Realm, artifact_id, encode_project_genesis, parse_artifact_id,
+        ProjectGenesis, Realm, artifact_id, encode_project_genesis, encode_tree, parse_artifact_id,
     };
     use rusqlite::{Connection, params};
 
@@ -664,7 +986,7 @@ mod tests {
                     row.get(0)
                 })
                 .unwrap();
-            assert_eq!(migration_count, 2);
+            assert_eq!(migration_count, 3);
             assert_eq!(repository.project_genesis().unwrap(), Some(genesis));
         }
         fs::remove_file(path).unwrap();
@@ -879,6 +1201,122 @@ mod tests {
                 .unwrap(),
             Some(replacement)
         );
+    }
+
+    #[test]
+    fn atomically_persists_realm_isolated_snapshot_objects_and_roots() {
+        let mut repository = LocalRepository::open_in_memory().unwrap();
+        let genesis = genesis(8);
+        let project = repository.init_project(&genesis).unwrap();
+        let captured_at = "2026-08-24T00:00:01Z";
+        let snapshots = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[
+                SnapshotInput {
+                    path: "public.txt".into(),
+                    realm: Realm::Public,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"same".to_vec(),
+                        executable: false,
+                    },
+                },
+                SnapshotInput {
+                    path: "members.txt".into(),
+                    realm: Realm::Members,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"same".to_vec(),
+                        executable: false,
+                    },
+                },
+                SnapshotInput {
+                    path: "link".into(),
+                    realm: Realm::Local,
+                    kind: SnapshotInputKind::Symlink {
+                        target: "public.txt".into(),
+                    },
+                },
+            ],
+        )
+        .unwrap();
+        repository
+            .replace_working_snapshots(&snapshots, captured_at)
+            .unwrap();
+
+        let roots = repository.working_snapshot_roots().unwrap();
+        assert_eq!(roots.len(), 3);
+        assert_eq!(roots[0].realm, Realm::Public);
+        assert_eq!(roots[1].realm, Realm::Members);
+        assert_eq!(roots[2].realm, Realm::Local);
+        assert!(roots.iter().all(|root| root.captured_at == captured_at));
+        let blob_rows: i64 = repository
+            .connection
+            .query_row("SELECT count(*) FROM blobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(blob_rows, 2, "same bytes remain isolated by realm");
+        repository.quick_check().unwrap();
+
+        repository
+            .replace_working_snapshots(&[], "2026-08-24T00:00:02Z")
+            .unwrap();
+        assert!(repository.working_snapshot_roots().unwrap().is_empty());
+        let retained_blobs: i64 = repository
+            .connection
+            .query_row("SELECT count(*) FROM blobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            retained_blobs, 2,
+            "root replacement leaves deduplicated objects"
+        );
+    }
+
+    #[test]
+    fn failed_snapshot_replacement_preserves_previous_roots() {
+        let mut repository = LocalRepository::open_in_memory().unwrap();
+        let genesis = genesis(9);
+        let project = repository.init_project(&genesis).unwrap();
+        let captured_at = "2026-08-24T00:00:01Z";
+        let mut snapshots = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[SnapshotInput {
+                path: "file.txt".into(),
+                realm: Realm::Public,
+                kind: SnapshotInputKind::File {
+                    bytes: b"first".to_vec(),
+                    executable: false,
+                },
+            }],
+        )
+        .unwrap();
+        repository
+            .replace_working_snapshots(&snapshots, captured_at)
+            .unwrap();
+        let previous = repository.working_snapshot_roots().unwrap();
+
+        let mut missing_dependency = snapshots.clone();
+        missing_dependency[0].trees[0].artifact.entries[0].target =
+            format!("sha256:{}", "00".repeat(32));
+        let body = encode_tree(&missing_dependency[0].trees[0].artifact).unwrap();
+        let tree_id = artifact_id(&body);
+        missing_dependency[0].trees[0].id.clone_from(&tree_id);
+        missing_dependency[0].root = tree_id;
+        assert!(
+            repository
+                .replace_working_snapshots(&missing_dependency, captured_at)
+                .is_err()
+        );
+        assert_eq!(repository.working_snapshot_roots().unwrap(), previous);
+
+        snapshots[0].blobs[0].id = format!("sha256:{}", "00".repeat(32));
+        assert!(
+            repository
+                .replace_working_snapshots(&snapshots, captured_at)
+                .is_err()
+        );
+        assert_eq!(repository.working_snapshot_roots().unwrap(), previous);
     }
 
     #[test]

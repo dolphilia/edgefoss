@@ -1,24 +1,29 @@
 //! Local `EdgeFossil` command-line workflows.
 
 use std::{
+    collections::BTreeSet,
     error::Error,
     ffi::{OsStr, OsString},
     fmt, fs,
-    fs::OpenOptions,
+    fs::{File, Metadata, OpenOptions},
+    io::Read,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
 use ef_format::{ProjectGenesis, Realm, encode_project_genesis, validate_path};
 use ef_store_sqlite::{LocalRepository, TrackingMode, TrackingRule, TrackingScope};
 
 const METADATA_DIRECTORY: &str = ".edgefossil";
 const DATABASE_FILE: &str = "repository.sqlite3";
+const MAX_SNAPSHOT_BLOB_BYTES: u64 = 16 * 1024 * 1024;
 const HELP: &str = "EdgeFossil local repository CLI
 
 Usage:
   ef init --name <NAME> --actor-key <64 LOWERCASE HEX> [--path <DIRECTORY>]
   ef track [--local | --none | --realm <public|members>] [--path <DIRECTORY>] <TARGET>
+  ef snapshot [--path <DIRECTORY>]
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
@@ -61,6 +66,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), CliError
     match command.to_str() {
         Some("init") => run_init(parse_init(arguments)?),
         Some("track") => run_track(&parse_track(arguments)?),
+        Some("snapshot") => run_snapshot(&parse_snapshot(arguments)?),
         Some("status") => run_status(&parse_status(arguments)?),
         Some("--help" | "-h" | "help") => {
             reject_trailing(arguments)?;
@@ -94,6 +100,10 @@ struct TrackOptions {
     path: PathBuf,
     target: OsString,
     selection: TrackSelection,
+}
+
+struct SnapshotOptions {
+    path: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -196,6 +206,25 @@ fn parse_track(arguments: impl Iterator<Item = OsString>) -> Result<TrackOptions
         path: path.unwrap_or_else(|| PathBuf::from(".")),
         target: target.ok_or_else(|| CliError::new("missing required TARGET"))?,
         selection: selection.unwrap_or(TrackSelection::Project(Realm::Public)),
+    })
+}
+
+fn parse_snapshot(arguments: impl Iterator<Item = OsString>) -> Result<SnapshotOptions, CliError> {
+    let mut path = None;
+    let mut arguments = arguments.peekable();
+    while let Some(option) = arguments.next() {
+        match option.to_str() {
+            Some("--path") => set_once(
+                &mut path,
+                PathBuf::from(parse_value(&mut arguments, "--path")?),
+                "--path",
+            )?,
+            Some(other) => return Err(CliError::new(format!("unknown snapshot option `{other}`"))),
+            None => return Err(CliError::new("snapshot option must be valid UTF-8")),
+        }
+    }
+    Ok(SnapshotOptions {
+        path: path.unwrap_or_else(|| PathBuf::from(".")),
     })
 }
 
@@ -365,6 +394,9 @@ fn run_status(options: &StatusOptions) -> Result<(), CliError> {
     let tracking_counts = repository
         .tracking_counts()
         .map_err(|error| CliError::new(error.to_string()))?;
+    let snapshot_roots = repository
+        .working_snapshot_roots()
+        .map_err(|error| CliError::new(error.to_string()))?;
 
     println!("repository: {}", root.display());
     println!("project: {project_id}");
@@ -374,6 +406,13 @@ fn run_status(options: &StatusOptions) -> Result<(), CliError> {
     println!("tracking-project: {}", tracking_counts.project);
     println!("tracking-local: {}", tracking_counts.local);
     println!("tracking-none: {}", tracking_counts.none);
+    for realm in [Realm::Public, Realm::Members, Realm::Local] {
+        let root = snapshot_roots
+            .iter()
+            .find(|root| root.realm == realm)
+            .map_or("-", |root| root.id.as_str());
+        println!("working-root-{}: {root}", realm.as_str());
+    }
     if let Some(target) = &options.explain {
         let (selector, _) = repository_selector(&root, &start, target)?;
         let rule = repository
@@ -415,6 +454,273 @@ fn run_track(options: &TrackOptions) -> Result<(), CliError> {
     println!("selector: {} {}", rule.scope().as_str(), rule.selector());
     println!("tracking: {}", rule.mode().as_str());
     println!("realm: {}", rule.realm().map_or("-", Realm::as_str));
+    Ok(())
+}
+
+fn run_snapshot(options: &SnapshotOptions) -> Result<(), CliError> {
+    let start = canonical_directory(&options.path)?;
+    let root = find_repository_root(&start)?.ok_or_else(|| {
+        CliError::new(format!(
+            "no EdgeFossil repository found from {}",
+            start.display()
+        ))
+    })?;
+    let database_path = root.join(METADATA_DIRECTORY).join(DATABASE_FILE);
+    let mut repository = open_repository(&database_path)?;
+    let project = repository
+        .project_id()
+        .map_err(|error| CliError::new(error.to_string()))?
+        .ok_or_else(|| CliError::new("repository database is not initialized"))?;
+    let genesis = repository
+        .project_genesis()
+        .map_err(|error| CliError::new(error.to_string()))?
+        .ok_or_else(|| CliError::new("repository genesis is missing"))?;
+    let rules = repository
+        .tracking_rules()
+        .map_err(|error| CliError::new(error.to_string()))?;
+    let inputs = collect_snapshot_inputs(&root, &repository, &rules)?;
+    let snapshots =
+        build_realm_snapshots(&project, genesis.actor_key, &genesis.created_at, &inputs)
+            .map_err(|error| CliError::new(error.to_string()))?;
+    let captured_at = current_timestamp()?;
+    repository
+        .replace_working_snapshots(&snapshots, &captured_at)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    if snapshots.is_empty() {
+        println!("snapshot: empty");
+    } else {
+        for snapshot in snapshots {
+            println!("root-{}: {}", snapshot.realm.as_str(), snapshot.root);
+            println!(
+                "blobs-{}: {}",
+                snapshot.realm.as_str(),
+                snapshot.blobs.len()
+            );
+            println!(
+                "trees-{}: {}",
+                snapshot.realm.as_str(),
+                snapshot.trees.len()
+            );
+        }
+    }
+    println!("captured-at: {captured_at}");
+    Ok(())
+}
+
+fn collect_snapshot_inputs(
+    root: &Path,
+    repository: &LocalRepository,
+    rules: &[TrackingRule],
+) -> Result<Vec<SnapshotInput>, CliError> {
+    let mut candidates = BTreeSet::new();
+    for rule in rules
+        .iter()
+        .filter(|rule| rule.mode() != TrackingMode::None)
+    {
+        let disk_path = repository_path(root, rule.selector());
+        match rule.scope() {
+            TrackingScope::Path => {
+                fs::symlink_metadata(&disk_path).map_err(|error| {
+                    CliError::new(format!(
+                        "tracked path is unavailable {}: {error}",
+                        disk_path.display()
+                    ))
+                })?;
+                candidates.insert(rule.selector().to_owned());
+            }
+            TrackingScope::Prefix => {
+                collect_subtree(root, &disk_path, rule.selector(), &mut candidates)?;
+            }
+        }
+    }
+
+    let mut inputs = Vec::new();
+    for selector in candidates {
+        let Some(rule) = repository
+            .resolve_tracking(&selector)
+            .map_err(|error| CliError::new(error.to_string()))?
+        else {
+            continue;
+        };
+        let Some(realm) = rule.realm() else {
+            continue;
+        };
+        let kind = read_snapshot_input(root, &selector)?;
+        inputs.push(SnapshotInput {
+            path: selector,
+            realm,
+            kind,
+        });
+    }
+    Ok(inputs)
+}
+
+fn collect_subtree(
+    root: &Path,
+    disk_path: &Path,
+    selector: &str,
+    output: &mut BTreeSet<String>,
+) -> Result<(), CliError> {
+    let metadata = fs::symlink_metadata(disk_path).map_err(|error| {
+        CliError::new(format!(
+            "tracked path is unavailable {}: {error}",
+            disk_path.display()
+        ))
+    })?;
+    output.insert(selector.into());
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    let canonical = fs::canonicalize(disk_path).map_err(|error| {
+        CliError::new(format!("cannot resolve {}: {error}", disk_path.display()))
+    })?;
+    if !canonical.starts_with(root) {
+        return Err(CliError::new(format!(
+            "tracked directory escapes repository: {}",
+            disk_path.display()
+        )));
+    }
+    let mut children = fs::read_dir(disk_path)
+        .map_err(|error| CliError::new(format!("cannot read {}: {error}", disk_path.display())))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CliError::new(format!("cannot read {}: {error}", disk_path.display())))?;
+    children.sort_by_key(std::fs::DirEntry::file_name);
+    for child in children {
+        let name = child
+            .file_name()
+            .into_string()
+            .map_err(|_| CliError::new("tracked filesystem names must be valid UTF-8"))?;
+        let child_selector = format!("{selector}/{name}");
+        validate_path(&child_selector).map_err(|error| {
+            CliError::new(format!("invalid tracked path {child_selector}: {error}"))
+        })?;
+        collect_subtree(root, &child.path(), &child_selector, output)?;
+    }
+    Ok(())
+}
+
+fn repository_path(root: &Path, selector: &str) -> PathBuf {
+    selector
+        .split('/')
+        .fold(root.to_path_buf(), |path, segment| path.join(segment))
+}
+
+fn read_snapshot_input(root: &Path, selector: &str) -> Result<SnapshotInputKind, CliError> {
+    let path = repository_path(root, selector);
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        CliError::new(format!("tracked path changed {}: {error}", path.display()))
+    })?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        let target = fs::read_link(&path)
+            .map_err(|error| CliError::new(format!("cannot read {}: {error}", path.display())))?;
+        let target = target
+            .to_str()
+            .ok_or_else(|| CliError::new("symlink target must be valid UTF-8"))?;
+        validate_symlink_within_root(selector, target)?;
+        return Ok(SnapshotInputKind::Symlink {
+            target: target.into(),
+        });
+    }
+    if file_type.is_dir() {
+        return Ok(SnapshotInputKind::Directory);
+    }
+    if !file_type.is_file() {
+        return Err(CliError::new(format!(
+            "unsupported tracked file type: {}",
+            path.display()
+        )));
+    }
+    let (bytes, executable) = read_stable_file(&path, &metadata)?;
+    Ok(SnapshotInputKind::File { bytes, executable })
+}
+
+fn read_stable_file(path: &Path, path_metadata: &Metadata) -> Result<(Vec<u8>, bool), CliError> {
+    let mut file = File::open(path)
+        .map_err(|error| CliError::new(format!("cannot open {}: {error}", path.display())))?;
+    let before = file
+        .metadata()
+        .map_err(|error| CliError::new(format!("cannot inspect {}: {error}", path.display())))?;
+    if !same_file(path_metadata, &before) {
+        return Err(CliError::new(format!(
+            "tracked file changed while opening: {}",
+            path.display()
+        )));
+    }
+    if before.len() > MAX_SNAPSHOT_BLOB_BYTES {
+        return Err(CliError::new(format!(
+            "tracked file exceeds the 16 MiB alpha limit: {}",
+            path.display()
+        )));
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(before.len()).unwrap_or(0));
+    (&mut file)
+        .take(MAX_SNAPSHOT_BLOB_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| CliError::new(format!("cannot read {}: {error}", path.display())))?;
+    let after = file
+        .metadata()
+        .map_err(|error| CliError::new(format!("cannot inspect {}: {error}", path.display())))?;
+    if bytes.len() as u64 != before.len() || !same_file(&before, &after) {
+        return Err(CliError::new(format!(
+            "tracked file changed while reading: {}",
+            path.display()
+        )));
+    }
+    Ok((bytes, is_executable(&before)))
+}
+
+fn same_file(left: &Metadata, right: &Metadata) -> bool {
+    if left.len() != right.len()
+        || left.file_type() != right.file_type()
+        || left.modified().ok() != right.modified().ok()
+    {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn is_executable(metadata: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn validate_symlink_within_root(selector: &str, target: &str) -> Result<(), CliError> {
+    let bytes = target.as_bytes();
+    let drive_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if target.is_empty() || target.starts_with(['/', '\\']) || drive_prefix {
+        return Err(CliError::new(format!(
+            "symlink target is absolute or invalid: {selector}"
+        )));
+    }
+    let mut depth = selector.split('/').count() - 1;
+    for segment in target.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." if depth == 0 => {
+                return Err(CliError::new(format!(
+                    "symlink target escapes repository: {selector}"
+                )));
+            }
+            ".." => depth -= 1,
+            _ => depth += 1,
+        }
+    }
     Ok(())
 }
 

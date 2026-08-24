@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2f、I3a、I3bはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、I3aのSQLite基盤とI3bのCLI `ef init` / `ef status`に続き、I3cとしてworking-copy tracking intent、`ef track`、`ef status --explain`を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2f、I3a–I3cはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、SQLite/CLI/tracking intentに続き、I3dとしてtracked filesystemからrealm別blob/canonical treeを作り、unsigned working rootをatomicに置換する`ef snapshot`を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)、[`I3c tracking evidence`](../evidence/i3c-working-copy-tracking-local-2026-08-24.md)、[`I3d snapshot evidence`](../evidence/i3d-working-snapshot-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-24）: I3aのSQLite基盤とI3bの`ef init` / `ef status`はcommit/CI済み。I3cではschema migration v2でdevice-localなworking-copy tracking intentを追加し、`ef track`で`none/local/project`とproject時の`public/members`を保存し、`ef status --explain`でexact-first・longest-prefixの実効結果を説明できるようにした。これはportable policy artifactでもsnapshotでもなく、file contentをまだ読み込まない。local full check/buildを通してcommit/CI確認待ちとし、その後はtracked pathからblob/treeを構築するsnapshot incrementへ進む。秘密鍵の生成・保存・署名はcheckpointのsigned write pathと一緒に扱う。
+実行状況（2026-08-24）: I3a–I3cのSQLite/CLI/tracking intentはcommit/CI済み。I3dではschema migration v3、realm複合keyのraw blob、canonical tree builder、filesystem raceのbest-effort検出、symlink lexical escape拒否、全realm working rootの一括transaction置換を実装した。`ef snapshot`はunsigned working stateでありchange/ref/historyを進めず、members-only変更でpublic rootが変わらないことをE2Eで固定した。local full check/buildを通してcommit/CI確認待ちとし、その後はこのrootからrealm別changeを作るcheckpointと秘密鍵/署名boundaryを設計・実装する。
 
 成果物:
 

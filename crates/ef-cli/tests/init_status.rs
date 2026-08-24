@@ -109,7 +109,7 @@ fn initializes_repository_and_reports_status() {
     let status = stdout(&status);
     assert!(status.contains(&format!("project: {project_id}\n")));
     assert!(status.contains("name: Example\n"));
-    assert!(status.contains("schema: 2\n"));
+    assert!(status.contains("schema: 3\n"));
     assert!(status.contains("integrity: ok\n"));
 }
 
@@ -336,4 +336,81 @@ fn rejects_conflicting_tracking_destinations_and_metadata_target() {
     assert!(status.contains("tracking-project: 0\n"));
     assert!(status.contains("tracking-local: 0\n"));
     assert!(status.contains("tracking-none: 0\n"));
+}
+
+fn output_value(output: &Output, prefix: &str) -> String {
+    stdout(output)
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn snapshots_realm_roots_without_cross_realm_churn() {
+    let directory = TestDirectory::new();
+    let initialized = initialize(&directory, "Snapshots");
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    for (path, content) in [
+        ("public.txt", "public\n"),
+        ("members.txt", "members one\n"),
+        ("local.txt", "local\n"),
+        ("ignored.txt", "ignored\n"),
+    ] {
+        fs::write(directory.as_ref().join(path), content).unwrap();
+    }
+    let root = directory.as_ref().to_str().unwrap();
+    for arguments in [
+        vec!["track", "--path", root, "public.txt"],
+        vec!["track", "--path", root, "--realm", "members", "members.txt"],
+        vec!["track", "--path", root, "--local", "local.txt"],
+        vec!["track", "--path", root, "--none", "ignored.txt"],
+    ] {
+        let tracked = ef(&arguments);
+        assert!(tracked.status.success(), "{}", stderr(&tracked));
+    }
+
+    let first = ef(&["snapshot", "--path", root]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(stdout(&first).contains("blobs-public: 1\n"));
+    assert!(stdout(&first).contains("blobs-members: 1\n"));
+    assert!(stdout(&first).contains("blobs-local: 1\n"));
+    let first_public = output_value(&first, "root-public: ");
+    let first_members = output_value(&first, "root-members: ");
+    let first_local = output_value(&first, "root-local: ");
+
+    fs::write(directory.as_ref().join("members.txt"), "members two\n").unwrap();
+    let second = ef(&["snapshot", "--path", root]);
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_eq!(output_value(&second, "root-public: "), first_public);
+    assert_ne!(output_value(&second, "root-members: "), first_members);
+    assert_eq!(output_value(&second, "root-local: "), first_local);
+
+    let status = ef(&["status", "--path", root]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    assert!(stdout(&status).contains(&format!("working-root-public: {first_public}\n")));
+}
+
+#[cfg(unix)]
+#[test]
+fn escaping_symlink_aborts_snapshot_without_replacing_root() {
+    use std::os::unix::fs::symlink;
+
+    let directory = TestDirectory::new();
+    let initialized = initialize(&directory, "Symlinks");
+    assert!(initialized.status.success(), "{}", stderr(&initialized));
+    fs::write(directory.as_ref().join("safe.txt"), "safe\n").unwrap();
+    let root = directory.as_ref().to_str().unwrap();
+    assert!(ef(&["track", "--path", root, "safe.txt"]).status.success());
+    let first = ef(&["snapshot", "--path", root]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let first_root = output_value(&first, "root-public: ");
+
+    symlink("../outside", directory.as_ref().join("escape")).unwrap();
+    assert!(ef(&["track", "--path", root, "escape"]).status.success());
+    let rejected = ef(&["snapshot", "--path", root]);
+    assert!(!rejected.status.success());
+    assert!(stderr(&rejected).contains("symlink target escapes repository"));
+    let status = ef(&["status", "--path", root]);
+    assert!(stdout(&status).contains(&format!("working-root-public: {first_root}\n")));
 }
