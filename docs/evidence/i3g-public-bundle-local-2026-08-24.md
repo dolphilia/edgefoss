@@ -2,9 +2,9 @@
 
 - Increment: I3g, accepted public graph export and offline deep verification
 - Base commit: `991f3a4fcb91c852ec50fe28079a97681db35654`
-- Source state: local working tree; commit and CI confirmation pending
+- Source commit: `a7f0bbc520f6f0aac8f88be627ac2820abbfd288`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: local pass; commit, push, and GitHub Actions CI confirmed by the user
 
 ## Demonstrated slice
 

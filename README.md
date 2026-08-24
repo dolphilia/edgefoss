@@ -64,6 +64,15 @@ cargo run -p ef-cli --bin ef -- history --path /path/to/project \
 cargo run -p ef-cli --bin ef -- export --path /path/to/project \
   --realm public --output /safe/export/path/public.edge
 cargo run -p ef-cli --bin ef -- verify /safe/export/path/public.edge
+cargo run -p ef-cli --bin ef -- export --path /path/to/project \
+  --realm members --base public=/safe/export/path/public.edge \
+  --output /safe/export/path/members.edge
+cargo run -p ef-cli --bin ef -- verify /safe/export/path/members.edge \
+  --base public=/safe/export/path/public.edge
+cargo run -p ef-cli --bin ef -- export --path /path/to/project \
+  --realm local --base public=/safe/export/path/public.edge \
+  --base members=/safe/export/path/members.edge \
+  --output /safe/export/path/local.edge
 ```
 
 The default destination is `project/public`; `--realm members`, `--local`, and
@@ -76,10 +85,13 @@ the latest snapshot with that realm's accepted head using structural
 name/status output, and `history` walks only that realm's verified checkpoint
 chain. `export` writes the complete accepted public graph as an experimental
 unpacked `bundle-v0` directory; `verify` checks it offline without the source
-database or Cloudflare. The output path must not already exist. I3g deliberately
-supports only `--realm public`; members/local export needs verified lower-realm
-base bundles and remains pending. Content hunks, historical-change diff, and
-bundle import are not implemented yet.
+database or Cloudflare. The output path must not already exist. A members
+bundle requires its exact verified public bundle as `--base`; a local bundle
+requires exact public and members bases. Each output still contains only its
+own realm, so protect members/local bundle directories according to their
+content. A local bundle is an explicit device-backup artifact and is never
+included implicitly in project/member export. Content hunks, historical-change
+diff, and bundle import are not implemented yet.
 
 No Cloudflare account or remote resource is required for the current local
 checks or CLI. Do not deploy without an explicit environment.

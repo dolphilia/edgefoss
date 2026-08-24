@@ -351,6 +351,7 @@ struct CheckpointFixture {
     _key_directory: TestDirectory,
     public_head: String,
     members_head: String,
+    local_head: String,
     second_public_head: String,
 }
 
@@ -390,6 +391,7 @@ impl CheckpointFixture {
         assert!(initialized.status.success(), "{}", stderr(&initialized));
         fs::write(directory.as_ref().join("public.txt"), "public\n").unwrap();
         fs::write(directory.as_ref().join("members.txt"), "members\n").unwrap();
+        fs::write(directory.as_ref().join("local.txt"), "local\n").unwrap();
         assert!(
             ef(&["track", "--path", root, "public.txt"])
                 .status
@@ -397,6 +399,11 @@ impl CheckpointFixture {
         );
         assert!(
             ef(&["track", "--path", root, "--realm", "members", "members.txt"])
+                .status
+                .success()
+        );
+        assert!(
+            ef(&["track", "--path", root, "--local", "local.txt"])
                 .status
                 .success()
         );
@@ -422,6 +429,9 @@ impl CheckpointFixture {
         let members = checkpoint("members", "members-only message");
         let members_head = output_value(&members, "checkpoint-members: ");
         assert!(stdout(&members).contains("generation: 1\n"));
+        let local = checkpoint("local", "local-only message");
+        let local_head = output_value(&local, "checkpoint-local: ");
+        assert!(stdout(&local).contains("generation: 1\n"));
         let second_public = checkpoint("public", "second\npublic\tmessage\u{1b}");
         let second_public_head = output_value(&second_public, "checkpoint-public: ");
         assert!(stdout(&second_public).contains("generation: 2\n"));
@@ -430,6 +440,7 @@ impl CheckpointFixture {
             _key_directory: key_directory,
             public_head,
             members_head,
+            local_head,
             second_public_head,
         }
     }
@@ -503,7 +514,8 @@ fn generates_a_protected_key_and_checkpoints_realms_independently() {
         fixture.members_head
     )));
     assert!(status.contains("checkpoint-generation-members: 1\n"));
-    assert!(status.contains("checkpoint-head-local: -\n"));
+    assert!(status.contains(&format!("checkpoint-head-local: {}\n", fixture.local_head)));
+    assert!(status.contains("checkpoint-generation-local: 1\n"));
 }
 
 #[test]
@@ -635,8 +647,99 @@ fn exports_and_offline_verifies_a_public_bundle_without_restricted_leakage() {
         members_bundle.to_str().unwrap(),
     ]);
     assert!(!members.status.success());
-    assert!(stderr(&members).contains("require verified base bundles"));
+    assert!(stderr(&members).contains("requires --base public=BUNDLE_DIRECTORY"));
     assert!(!members_bundle.exists());
+}
+
+#[test]
+fn exports_and_verifies_composed_members_and_local_bundles() {
+    let fixture = CheckpointFixture::new();
+    let output_directory = TestDirectory::new();
+    let public = output_directory.as_ref().join("public.edge");
+    let members = output_directory.as_ref().join("members.edge");
+    let local = output_directory.as_ref().join("local.edge");
+    let public_base = format!("public={}", public.display());
+    let members_base = format!("members={}", members.display());
+
+    let export_public = ef(&[
+        "export",
+        "--path",
+        fixture.root(),
+        "--realm",
+        "public",
+        "--output",
+        public.to_str().unwrap(),
+    ]);
+    assert!(export_public.status.success(), "{}", stderr(&export_public));
+    let export_members = ef(&[
+        "export",
+        "--path",
+        fixture.root(),
+        "--realm",
+        "members",
+        "--base",
+        &public_base,
+        "--output",
+        members.to_str().unwrap(),
+    ]);
+    assert!(
+        export_members.status.success(),
+        "{}",
+        stderr(&export_members)
+    );
+    let verify_members = ef(&["verify", members.to_str().unwrap(), "--base", &public_base]);
+    assert!(
+        verify_members.status.success(),
+        "{}",
+        stderr(&verify_members)
+    );
+    assert!(stdout(&verify_members).contains("realm: members\n"));
+    for kind in ["artifacts", "blobs", "signatures"] {
+        for entry in fs::read_dir(members.join(kind)).unwrap() {
+            let body = fs::read(entry.unwrap().path()).unwrap();
+            let text = String::from_utf8_lossy(&body);
+            assert!(!text.contains("public message"));
+            assert!(!text.contains("local-only message"));
+        }
+    }
+
+    let export_local = ef(&[
+        "export",
+        "--path",
+        fixture.root(),
+        "--realm",
+        "local",
+        "--base",
+        &public_base,
+        "--base",
+        &members_base,
+        "--output",
+        local.to_str().unwrap(),
+    ]);
+    assert!(export_local.status.success(), "{}", stderr(&export_local));
+    let verify_local = ef(&[
+        "verify",
+        local.to_str().unwrap(),
+        "--base",
+        &public_base,
+        "--base",
+        &members_base,
+    ]);
+    assert!(verify_local.status.success(), "{}", stderr(&verify_local));
+    assert!(stdout(&verify_local).contains("realm: local\n"));
+    for kind in ["artifacts", "blobs", "signatures"] {
+        for entry in fs::read_dir(local.join(kind)).unwrap() {
+            let body = fs::read(entry.unwrap().path()).unwrap();
+            let text = String::from_utf8_lossy(&body);
+            assert!(!text.contains("public message"));
+            assert!(!text.contains("members-only message"));
+        }
+    }
+
+    let mislabeled = format!("public={}", members.display());
+    let rejected = ef(&["verify", members.to_str().unwrap(), "--base", &mislabeled]);
+    assert!(!rejected.status.success());
+    assert!(stderr(&rejected).contains("points to a members bundle"));
 }
 
 #[test]

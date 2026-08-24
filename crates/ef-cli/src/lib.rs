@@ -40,8 +40,8 @@ Usage:
   ef checkpoint --realm <public|members|local> -m <MESSAGE> --signing-key-file <KEY_FILE> [--path <DIRECTORY>]
   ef history --realm <public|members|local> [--limit <1..1000>] [--path <DIRECTORY>]
   ef diff --realm <public|members|local> [--path <DIRECTORY>]
-  ef export --realm public --output <BUNDLE_DIRECTORY> [--path <DIRECTORY>]
-  ef verify <BUNDLE_DIRECTORY>
+  ef export --realm <public|members|local> --output <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]... [--path <DIRECTORY>]
+  ef verify <BUNDLE_DIRECTORY> [--base <REALM=BUNDLE_DIRECTORY>]...
   ef status [--path <DIRECTORY>] [--explain <TARGET>]
   ef --help
   ef --version
@@ -156,10 +156,17 @@ struct ExportOptions {
     path: PathBuf,
     realm: Realm,
     output: PathBuf,
+    bases: Vec<BundleBaseOption>,
 }
 
 struct VerifyOptions {
     bundle: PathBuf,
+    bases: Vec<BundleBaseOption>,
+}
+
+struct BundleBaseOption {
+    realm: Realm,
+    path: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -420,6 +427,7 @@ fn parse_export(arguments: impl Iterator<Item = OsString>) -> Result<ExportOptio
     let mut path = None;
     let mut realm = None;
     let mut output = None;
+    let mut bases = Vec::new();
     let mut arguments = arguments.peekable();
     while let Some(option) = arguments.next() {
         match option.to_str() {
@@ -438,6 +446,10 @@ fn parse_export(arguments: impl Iterator<Item = OsString>) -> Result<ExportOptio
                 PathBuf::from(parse_value(&mut arguments, "--output")?),
                 "--output",
             )?,
+            Some("--base") => {
+                let value = parse_utf8_value(&mut arguments, "--base")?;
+                push_bundle_base(&mut bases, &value)?;
+            }
             Some(other) => return Err(CliError::new(format!("unknown export option `{other}`"))),
             None => return Err(CliError::new("export option must be valid UTF-8")),
         }
@@ -446,17 +458,57 @@ fn parse_export(arguments: impl Iterator<Item = OsString>) -> Result<ExportOptio
         path: path.unwrap_or_else(|| PathBuf::from(".")),
         realm: realm.ok_or_else(|| CliError::new("missing required option --realm"))?,
         output: output.ok_or_else(|| CliError::new("missing required option --output"))?,
+        bases,
     })
 }
 
-fn parse_verify(mut arguments: impl Iterator<Item = OsString>) -> Result<VerifyOptions, CliError> {
-    let bundle = arguments
-        .next()
-        .ok_or_else(|| CliError::new("missing required BUNDLE_DIRECTORY"))?;
-    reject_trailing(arguments)?;
+fn parse_verify(arguments: impl Iterator<Item = OsString>) -> Result<VerifyOptions, CliError> {
+    let mut bundle = None;
+    let mut bases = Vec::new();
+    let mut arguments = arguments.peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str() {
+            Some("--base") => {
+                let value = parse_utf8_value(&mut arguments, "--base")?;
+                push_bundle_base(&mut bases, &value)?;
+            }
+            Some(value) if value.starts_with('-') => {
+                return Err(CliError::new(format!("unknown verify option `{value}`")));
+            }
+            _ => set_once(&mut bundle, PathBuf::from(argument), "BUNDLE_DIRECTORY")?,
+        }
+    }
     Ok(VerifyOptions {
-        bundle: PathBuf::from(bundle),
+        bundle: bundle.ok_or_else(|| CliError::new("missing required BUNDLE_DIRECTORY"))?,
+        bases,
     })
+}
+
+fn push_bundle_base(bases: &mut Vec<BundleBaseOption>, value: &str) -> Result<(), CliError> {
+    let (realm, path) = value
+        .split_once('=')
+        .ok_or_else(|| CliError::new("--base must be REALM=BUNDLE_DIRECTORY"))?;
+    let realm = match realm {
+        "public" => Realm::Public,
+        "members" => Realm::Members,
+        _ => {
+            return Err(CliError::new("--base realm must be `public` or `members`"));
+        }
+    };
+    if path.is_empty() {
+        return Err(CliError::new("--base bundle directory must not be empty"));
+    }
+    if bases.iter().any(|base| base.realm == realm) {
+        return Err(CliError::new(format!(
+            "--base {} was provided twice",
+            realm.as_str()
+        )));
+    }
+    bases.push(BundleBaseOption {
+        realm,
+        path: PathBuf::from(path),
+    });
+    Ok(())
 }
 
 fn set_tracking_selection(
@@ -761,11 +813,6 @@ fn run_diff(options: &DiffOptions) -> Result<(), CliError> {
 }
 
 fn run_export(options: &ExportOptions) -> Result<(), CliError> {
-    if options.realm != Realm::Public {
-        return Err(CliError::new(
-            "I3g export supports only --realm public; members/local require verified base bundles",
-        ));
-    }
     let start = canonical_directory(&options.path)?;
     let root = find_repository_root(&start)?.ok_or_else(|| {
         CliError::new(format!(
@@ -781,9 +828,14 @@ fn run_export(options: &ExportOptions) -> Result<(), CliError> {
             output.display()
         )));
     }
+    let verified_bases = verify_base_directories(options.realm, &options.bases)?;
+    let base_roots = verified_bases
+        .iter()
+        .map(|base| (base.realm(), base.semantic_root().to_owned()))
+        .collect::<Vec<_>>();
     let mut repository = open_repository(&root.join(METADATA_DIRECTORY).join(DATABASE_FILE))?;
     let bundle = repository
-        .export_public_bundle()
+        .export_bundle(options.realm, &base_roots)
         .map_err(|error| CliError::new(error.to_string()))?;
     write_bundle_atomically(&output, &bundle.manifest_bytes, &bundle.objects)?;
     println!("bundle: {}", output.display());
@@ -799,18 +851,74 @@ fn run_export(options: &ExportOptions) -> Result<(), CliError> {
 fn run_verify(options: &VerifyOptions) -> Result<(), CliError> {
     let root = canonical_bundle_directory(&options.bundle)?;
     let (manifest, objects) = read_bundle_directory(&root)?;
-    let verified = verify_portable_bundle(&manifest, &objects)
+    let decoded = decode_bundle_manifest(&manifest)
+        .map_err(|error| CliError::new(format!("invalid bundle manifest: {error}")))?;
+    let bases = verify_base_directories(decoded.realm, &options.bases)?;
+    let verified = verify_portable_bundle(&manifest, &objects, &bases)
         .map_err(|error| CliError::new(error.to_string()))?;
     println!("bundle: {}", root.display());
     println!("verification: ok");
-    println!("project: {}", verified.project);
-    println!("realm: {}", verified.realm.as_str());
-    println!("semantic-root: {}", verified.semantic_root);
-    println!("artifacts: {}", verified.artifacts);
-    println!("blobs: {}", verified.blobs);
-    println!("signatures: {}", verified.signatures);
-    println!("refs: {}", verified.refs);
+    println!("project: {}", verified.project());
+    println!("realm: {}", verified.realm().as_str());
+    println!("semantic-root: {}", verified.semantic_root());
+    println!("artifacts: {}", verified.artifact_count());
+    println!("blobs: {}", verified.blob_count());
+    println!("signatures: {}", verified.signature_count());
+    println!("refs: {}", verified.ref_count());
     Ok(())
+}
+
+fn verify_base_directories(
+    target_realm: Realm,
+    options: &[BundleBaseOption],
+) -> Result<Vec<ef_store_sqlite::VerifiedBundle>, CliError> {
+    let required: &[Realm] = match target_realm {
+        Realm::Public => &[],
+        Realm::Members => &[Realm::Public],
+        Realm::Local => &[Realm::Public, Realm::Members],
+    };
+    if options.len() != required.len()
+        || required
+            .iter()
+            .any(|realm| !options.iter().any(|option| option.realm == *realm))
+    {
+        let spelling = match target_realm {
+            Realm::Public => "no --base options",
+            Realm::Members => "--base public=BUNDLE_DIRECTORY",
+            Realm::Local => "--base public=BUNDLE_DIRECTORY and --base members=BUNDLE_DIRECTORY",
+        };
+        return Err(CliError::new(format!(
+            "{} bundle requires {spelling}",
+            target_realm.as_str()
+        )));
+    }
+
+    let mut verified = Vec::new();
+    for realm in [Realm::Public, Realm::Members] {
+        let Some(option) = options.iter().find(|option| option.realm == realm) else {
+            continue;
+        };
+        let root = canonical_bundle_directory(&option.path)?;
+        let (manifest, objects) = read_bundle_directory(&root)?;
+        let decoded = decode_bundle_manifest(&manifest)
+            .map_err(|error| CliError::new(format!("invalid base bundle manifest: {error}")))?;
+        if decoded.realm != realm {
+            return Err(CliError::new(format!(
+                "--base {} points to a {} bundle",
+                realm.as_str(),
+                decoded.realm.as_str()
+            )));
+        }
+        let required_bases = if realm == Realm::Public {
+            &verified[..0]
+        } else {
+            verified.as_slice()
+        };
+        let summary = verify_portable_bundle(&manifest, &objects, required_bases)
+            .map_err(|error| CliError::new(format!("invalid {} base: {error}", realm.as_str())))?;
+        verified.push(summary);
+    }
+    Ok(verified)
 }
 
 fn canonical_new_directory_path(path: &Path) -> Result<PathBuf, CliError> {
