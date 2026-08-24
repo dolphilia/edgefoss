@@ -485,14 +485,15 @@ localで手動deployする間は不要である。P4以降、CIからstagingま�
 
 ### 10.1 tokenを作る
 
-1. Cloudflare dashboardでuser menuを開く。
-2. `My Profile` → `API Tokens` を開く。
-3. `Create Token`を選ぶ。
-4. templateから `Edit Cloudflare Workers` を選ぶ。
-5. account resourcesをEdgeFossilに使う一つのaccountへ限定する。
-6. zone permissionが不要なstagingでは、不要なzoneを追加しない。
-7. summaryを確認してtokenを作成する。
-8. 表示されたtokenを一度だけcopyし、直ちにCI secret storeへ保存する。
+1. Cloudflare dashboardでEdgeFossilに使うaccountを開く。
+2. `Manage Account` → `API Tokens`を開く。
+3. `Create Account API token`または`Create Token`を選ぶ。
+4. permission policyの`Custom` dropdownから`Edit Cloudflare Workers`を選ぶ。
+5. token名を`edgefoss-staging-github-actions`など用途が分かる名前にする。
+6. account resourcesをEdgeFossilに使う一つのaccountへ限定する。
+7. template外のpermission、別account、不要なzoneを追加しない。
+8. summaryを確認してtokenを作成する。
+9. 表示されたtokenを一度だけcopyし、直ちにCI secret storeへ保存する。
 
 tokenをlocal shell profile、repository、`.env`、issue、chatへ保存しない。
 
@@ -502,8 +503,9 @@ tokenをlocal shell profile、repository、`.env`、issue、chatへ保存しな�
 2. `Secrets and variables` → `Actions` を開く。
 3. `New repository secret`を選ぶ。
 4. nameを `CLOUDFLARE_API_TOKEN`、valueをCloudflare tokenにする。
-5. account IDは `CLOUDFLARE_ACCOUNT_ID` というActions variable、または運用方針に応じてsecretとして保存する。
-6. production deployにenvironment approvalを使う場合、repository secretではなくGitHub `production` environmentへtokenを置く。
+5. `New repository secret`をもう一度選び、nameを`CLOUDFLARE_ACCOUNT_ID`、valueを選択済みaccountのAccount IDにする。
+6. `Deploy staging Worker` workflowがcommit済みになるまではworkflowを実行しない。
+7. production deployにenvironment approvalを使う場合、repository secretではなくGitHub `production` environmentへ別tokenを置く。
 
 CI workflowは次の環境変数だけをWranglerへ渡す。
 
@@ -520,6 +522,8 @@ CLOUDFLARE_ACCOUNT_ID
 - Global API Keyを使っていない。
 
 Cloudflareの公式GitHub Actions手順も、localでは`wrangler login`、CIではAPI token + account IDを使い、`Edit Cloudflare Workers` templateからtokenを作る方法を示している。
+
+現在のstaging workflowは二つともrepository secretとして参照する。Account IDはtokenではないが、workflowとの設定差を減らし、account情報を不用意にlogへ出さないため同じ画面へ保存する。GitHub Environment、production token、automatic push deployはこのcheckpointでは作らない。
 
 参考:
 

@@ -686,6 +686,16 @@ CI deploy checkpoint U3:
 - 実際にCIが行うprovision/deploy operationにtemplate外のpermissionが必要なら、公式permission一覧で確認した必要最小scopeだけを追加する。
 - token valueを完了報告、log、issue、repositoryへ貼らせない。
 
+U3 readiness実行状況（2026-08-25）: P4a manual OAuth deployとremote stateful
+smokeの成功後、manual `workflow_dispatch`かつ`main`限定のstaging CI deploy
+workflowをlocal実装した。GitHub tokenは`contents: read`のみ、deployは直列化し、
+全check、staging dry-run、immutable SHAへ固定した公式Wrangler Action v4.0.0、
+exact GET/HEAD health auditを通る。production/provision/Queue operationは含まない。
+U3 secretがなければmutation前に明示失敗する。この変更のcommit/CI成功後にだけ、
+account ownerへ`Edit Cloudflare Workers`を一accountへ限定したtokenと二つのGitHub
+Actions secret設定を依頼する。詳細は[`ADR 0027`](../adr/0027-manual-main-only-staging-ci-deploy.md)と
+[`U3 readiness evidence`](../evidence/u3-ci-deploy-workflow-local-2026-08-25.md)を参照する。
+
 成果物:
 
 - staging/productionのresource名、binding、jurisdictionを一つに定義するresource manifest
