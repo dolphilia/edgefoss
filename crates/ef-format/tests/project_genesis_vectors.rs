@@ -70,6 +70,10 @@ fn error_name(code: FormatErrorCode) -> &'static str {
         FormatErrorCode::UnknownRequiredSemantics => "unknown_required_semantics",
         FormatErrorCode::InvalidLogicalClock => "invalid_logical_clock",
         FormatErrorCode::InvalidSignature => "invalid_signature",
+        FormatErrorCode::MissingBundleObject => "missing_bundle_object",
+        FormatErrorCode::UnexpectedBundleObject => "unexpected_bundle_object",
+        FormatErrorCode::BundleObjectMismatch => "bundle_object_mismatch",
+        FormatErrorCode::SemanticRootMismatch => "semantic_root_mismatch",
     }
 }
 

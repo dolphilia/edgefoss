@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2dはcommit/CI済み。I2eの独立実装可能性reviewでartifact ID mismatch、CBOR上限、unknown semantics、共有corpusの差を修正し、production codecに依存しないvector auditを追加した。I2eはlocal full check/build完了、commit/CI確認待ちである。ただし`bundle-v0`と独立readerが未作成のためG1はno-goであり、P2 critical pathへは進まない。詳細は[`I2e conformance-review evidence`](../evidence/i2e-conformance-review-local-2026-08-24.md)と[`G1 independent implementation readiness review`](../reviews/g1-independent-implementation-readiness-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2eはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript manifest/object verifier、production codecに依存しないbundle readerを追加した。9個の共有vector file、64 accepted/81 rejected cases、5 bundle mutationとlocal full check/buildに合格し、G1はlocal go candidateとなった。I2fのcommit/CI確認後にG1 goを確定する。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)と[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -1433,16 +1433,16 @@ P0/P1を開始するための最初のissue候補を、依存順に並べる。
 2. [完了] ADR templateとdecision index
 3. [完了] portable/authority/derived state ADR
 4. [完了] artifact ID文字列表現ADR
-5. deterministic CBOR profile draft
-6. realm/capability information-flow ADR
-7. path portability specification
-8. semantic root specification
-9. Rust canonical encoder skeleton
-10. TypeScript canonical encoder skeleton
-11. valid golden vector generator/reviewer
-12. invalid corpus runner
-13. Rust↔TypeScript differential test command
-14. bundle manifest/container spike
+5. [完了] deterministic CBOR profile draft
+6. [完了] realm/capability information-flow ADR
+7. [完了] path portability specification
+8. [完了] semantic root specification
+9. [完了] Rust canonical encoder skeleton
+10. [完了] TypeScript canonical encoder skeleton
+11. [完了] valid golden vector generator/reviewer
+12. [完了] invalid corpus runner
+13. [完了] Rust↔TypeScript differential test command
+14. [完了] bundle manifest/container spike
 15. local SQLite schema v0
 16. process-kill/fault harness skeleton
 17. Wrangler `single-do` dev configuration spike

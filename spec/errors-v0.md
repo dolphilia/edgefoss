@@ -40,6 +40,15 @@ meaning are normative in [`path-v0.md`](path-v0.md).
 | `invalid_signature`          | required signature is absent or invalid             |
 | `path_collision`             | tree contains conflicting portable names or realms  |
 
+## Bundle codes
+
+| code                       | meaning                                            |
+| -------------------------- | -------------------------------------------------- |
+| `missing_bundle_object`    | an inventoried bundle file is absent               |
+| `unexpected_bundle_object` | a bundle contains a file absent from its inventory |
+| `bundle_object_mismatch`   | object bytes do not match their inventory digest   |
+| `semantic_root_mismatch`   | manifest root differs from recomputed realm state  |
+
 ## Precedence
 
 Validation proceeds through transport limit, canonical CBOR, exact schema,

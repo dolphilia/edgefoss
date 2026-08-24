@@ -18,6 +18,7 @@ Read the documents in this order:
 7. [`graph-v0.md`](graph-v0.md)
 8. [`signature-v0.md`](signature-v0.md)
 9. [`semantic-root-v0.md`](semantic-root-v0.md)
+10. [`bundle-v0.md`](bundle-v0.md)
 
 Machine-readable valid and invalid examples live in [`vectors/`](vectors/).
 Rust and TypeScript implementations MUST consume the same files rather than

@@ -28,7 +28,11 @@ export type FormatErrorCode =
   | "realm_flow_denied"
   | "unknown_required_semantics"
   | "invalid_logical_clock"
-  | "invalid_signature";
+  | "invalid_signature"
+  | "missing_bundle_object"
+  | "unexpected_bundle_object"
+  | "bundle_object_mismatch"
+  | "semantic_root_mismatch";
 
 export class FormatError extends Error {
   constructor(

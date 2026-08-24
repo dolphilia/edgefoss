@@ -5,12 +5,17 @@ use std::{error::Error, fmt};
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
+mod bundle;
 mod graph;
 mod path;
 mod realm;
 mod semantic_root;
 mod signature;
 
+pub use bundle::{
+    BundleManifest, decode_bundle_manifest, encode_bundle_manifest, verify_bundle_manifest,
+    verify_bundle_objects,
+};
 pub use graph::{GraphArtifactKind, GraphArtifactSummary, validate_change_graph};
 pub use path::{PathError, PathErrorCode, validate_path};
 pub use realm::{ParseRealmError, Realm, ReferenceClass, can_reference};
@@ -44,6 +49,10 @@ pub enum FormatErrorCode {
     UnknownRequiredSemantics,
     InvalidLogicalClock,
     InvalidSignature,
+    MissingBundleObject,
+    UnexpectedBundleObject,
+    BundleObjectMismatch,
+    SemanticRootMismatch,
 }
 
 /// A rejected encoded value or artifact.

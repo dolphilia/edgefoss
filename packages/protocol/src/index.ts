@@ -52,3 +52,10 @@ export {
   type SemanticRootInput,
   type SemanticRootResult,
 } from "./semantic-root.js";
+export {
+  decodeBundleManifest,
+  encodeBundleManifest,
+  verifyBundleManifest,
+  verifyBundleObjects,
+  type BundleManifest,
+} from "./bundle.js";

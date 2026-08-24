@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 const directory = new URL("../spec/vectors/", import.meta.url);
 const expectedProfiles = new Map([
   ["artifact-id-v0.json", "edgefossil-artifact-id-v0"],
+  ["bundle-v0.json", "edgefossil-bundle-v0"],
   ["change-graph-v0.json", "edgefossil-change-graph-v0"],
   ["path-v0.json", "edgefossil-path-v0"],
   ["project-genesis-v0.json", "edgefossil-artifact-v0"],
@@ -120,6 +121,7 @@ const accepted =
   vectors["path-v0.json"].valid.length +
   semantic.expected.length +
   2 +
+  1 +
   1;
 const rejected =
   ids.invalid.length +
@@ -128,7 +130,8 @@ const rejected =
   semantic.invalid.length +
   signature.invalid.length +
   treeChange.invalid_trees.length +
-  treeChange.invalid_changes.length;
+  treeChange.invalid_changes.length +
+  vectors["bundle-v0.json"].invalid.length;
 if (accepted < 50 || rejected < 50) {
   fail(`corpus floor not met: accepted=${accepted}, rejected=${rejected}`);
 }
