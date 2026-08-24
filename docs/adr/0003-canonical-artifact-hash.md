@@ -23,7 +23,8 @@ The deterministic CBOR profile follows RFC 8949 core deterministic encoding and 
 
 - uses definite-length arrays, maps, byte strings, and text strings only;
 - uses shortest integer and length encodings;
-- orders map keys by their deterministic encoded bytes as required by the profile;
+- orders map keys by bytewise lexicographic comparison of their deterministic
+  encodings (RFC 8949 section 4.2.1 core order, not legacy length-first order);
 - rejects duplicate keys, floats, indefinite-length items, and tags unless a later schema explicitly permits one;
 - accepts only valid UTF-8 text; domain schemas define normalization and portability rather than silently normalizing during encoding;
 - excludes signatures, authority receipts, server sequence, physical storage keys, and derived projections from the artifact body;

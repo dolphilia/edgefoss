@@ -17,8 +17,8 @@
     "format:check": "prettier --check . && cargo fmt --all --check",
     "test": "pnpm test:ts && pnpm test:rust",
     "test:rust": "cargo test --workspace --all-targets",
-    "test:ts": "pnpm --filter @edgefoss/worker test",
-    "typecheck": "pnpm --filter @edgefoss/worker typecheck",
+    "test:ts": "pnpm --filter @edgefoss/protocol test && pnpm --filter @edgefoss/worker test",
+    "typecheck": "pnpm --filter @edgefoss/protocol typecheck && pnpm --filter @edgefoss/worker typecheck",
     "types": "pnpm --filter @edgefoss/worker types",
     "rust:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings"
   },

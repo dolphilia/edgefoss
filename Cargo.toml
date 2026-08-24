@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/edgefoss-core"]
+members = ["crates/edgefoss-core", "crates/ef-format"]
 resolver = "2"
 
 [workspace.package]
@@ -15,4 +15,3 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
-

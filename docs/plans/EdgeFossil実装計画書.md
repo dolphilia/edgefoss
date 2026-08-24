@@ -459,7 +459,7 @@ account ownerへは「Cloudflareを準備してください」だけで依頼し
 
 ### P0: bootstrap と設計決定（2–3 person-weeks）
 
-実行状況（2026-08-24）: local scaffold、必須ADR、local check、dry-run buildは完了。G0はGitHub Actionsの実行証跡がないためpending。詳細は[`G0 bootstrap evidence`](../evidence/g0-bootstrap-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: local scaffold、必須ADR、local check、dry-run build、commit `eb395ea`のGitHub Actions CIが完了し、G0はgo。詳細は[`G0 bootstrap evidence`](../evidence/g0-bootstrap-local-2026-08-24.md)を参照する。
 
 開始checkpoint U0:
 
@@ -509,6 +509,8 @@ Exit gate G0:
 ### P1: executable specification（4–6 person-weeks）
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
+
+実行状況（2026-08-24）: I1のlocal sliceが完了。canonical CBOR v0、artifact/project.genesis、path、tracking/publication policy、semantic rootのnormative draftを追加し、`project.genesis`をRust/TypeScriptで独立実装した。共通corpusはvalid 1件、invalid 7件で両実装が一致し、`pnpm check`とdry-run buildがNode.js 24で成功した。commit/CI確認後にI1をcloseし、I2としてtree/change/path/realmと50+50 corpusへ進む。G1は未達。詳細は[`I1 project.genesis local evidence`](../evidence/i1-project-genesis-local-2026-08-24.md)を参照する。
 
 成果物:
 

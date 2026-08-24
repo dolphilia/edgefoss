@@ -1,12 +1,12 @@
 # G0 bootstrap evidence — local
 
 - Gate: G0
-- Decision: pending external CI evidence
+- Decision: go
 - Date: 2026-08-24
-- Commit: uncommitted workspace
+- Commit: `eb395ea50f117f9853d393f7fc459b0e6b8ba5b6`
 - Environment: local macOS 15.6.1, Apple Silicon
 - Owner: implementation DRI
-- Reviewers: pending
+- Reviewers: account owner; GitHub Actions CI
 - USER-ACTION checkpoints: U0 complete
 
 ## Toolchain
@@ -27,6 +27,7 @@
 | `pnpm check`                                   | pass after all P0 ADR and scaffold changes                               |
 | `pnpm build`                                   | pass; explicit root environment dry run, 0.96 KiB bundle / 0.53 KiB gzip |
 | `pnpm --filter @edgefoss/worker check:startup` | pass; local startup profile only, not a production target                |
+| GitHub Actions `CI` on `eb395ea`               | pass; account-owner confirmation and public workflow badge               |
 
 The `pnpm check` aggregate covers Prettier, `cargo fmt`, TypeScript source/test typechecking, Workers runtime tests, Rust tests, Clippy with warnings denied, and local Markdown link validation.
 
@@ -40,9 +41,8 @@ The `pnpm check` aggregate covers Prettier, `cargo fmt`, TypeScript source/test 
 - coding, contribution, release, resource naming, quality target, gate evidence, and threat-model documents
 - ADR template/index and all eight P0 architecture decisions, plus artifact ID text representation
 
-## Open evidence and risks
+## Remaining risks
 
-- The GitHub Actions workflow has not run because the workspace has not been committed/pushed. G0 remains pending rather than claiming `go`.
 - P1 format/schema documents and cross-language golden vectors have not started.
 - No Cloudflare login, account ID, remote resource, billing product, or credential was used or created.
 - Startup measurements are local diagnostic evidence only and must not become a release threshold.
@@ -50,3 +50,5 @@ The `pnpm check` aggregate covers Prettier, `cargo fmt`, TypeScript source/test 
 ## Fallback
 
 All new runtime state is local and reproducible from lockfiles. No remote rollback is required.
+
+CI status: [GitHub Actions](https://github.com/dolphilia/edgefoss/actions/workflows/ci.yml) / [badge](https://github.com/dolphilia/edgefoss/actions/workflows/ci.yml/badge.svg)
