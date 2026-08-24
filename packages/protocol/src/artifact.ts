@@ -30,6 +30,31 @@ function schemaError(message: string): never {
   throw new FormatError("invalid_schema", message);
 }
 
+export function parseArtifactId(value: string): Uint8Array {
+  if (!/^sha256:[0-9a-f]{64}$/.test(value)) {
+    throw new FormatError(
+      "invalid_artifact_id",
+      "artifact ID must be sha256 plus 64 lowercase hexadecimal characters",
+    );
+  }
+  return Uint8Array.from(
+    value
+      .slice(7)
+      .match(/../g)!
+      .map((pair) => Number.parseInt(pair, 16)),
+  );
+}
+
+export function formatArtifactId(digest: Uint8Array): string {
+  if (digest.length !== 32) {
+    throw new FormatError(
+      "invalid_artifact_id",
+      "SHA-256 digest must be 32 bytes",
+    );
+  }
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 function exactKeys(
   map: Map<string, CborValue>,
   expected: Set<string>,
@@ -161,5 +186,5 @@ export async function artifactId(canonicalBody: Uint8Array): Promise<string> {
   const body = new ArrayBuffer(canonicalBody.byteLength);
   new Uint8Array(body).set(canonicalBody);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", body));
-  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return formatArtifactId(digest);
 }

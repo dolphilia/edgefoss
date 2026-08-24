@@ -26,8 +26,9 @@ Every non-genesis v0 artifact has exactly these fields:
 
 Unknown and missing fields are errors. `parents` is sorted by raw 32-byte digest
 and MUST describe only meaningful causal predecessors, not an arbitrary total
-order. A parent MUST have the same `project` and `realm`; cross-realm references
-are forbidden.
+order. A parent MUST have the same `project` and `realm`. Other kind-specific
+references follow `edgefossil-realm-v0`: a `members` artifact may depend on
+public content, but a public artifact can never identify members content.
 
 `created_at` MUST NOT determine authorization, conflict winners, or graph
 validity. Signature records and server acceptance receipts are separate objects

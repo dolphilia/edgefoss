@@ -12,8 +12,10 @@ Read the documents in this order:
 1. [`canonical-cbor-v0.md`](canonical-cbor-v0.md)
 2. [`artifact-v0.md`](artifact-v0.md)
 3. [`path-v0.md`](path-v0.md)
-4. [`policy-v0.md`](policy-v0.md)
-5. [`semantic-root-v0.md`](semantic-root-v0.md)
+4. [`realm-v0.md`](realm-v0.md)
+5. [`policy-v0.md`](policy-v0.md)
+6. [`errors-v0.md`](errors-v0.md)
+7. [`semantic-root-v0.md`](semantic-root-v0.md)
 
 Machine-readable valid and invalid examples live in [`vectors/`](vectors/).
 Rust and TypeScript implementations MUST consume the same files rather than

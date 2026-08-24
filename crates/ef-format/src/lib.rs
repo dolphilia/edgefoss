@@ -5,6 +5,12 @@ use std::{error::Error, fmt};
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
+mod path;
+mod realm;
+
+pub use path::{PathError, PathErrorCode, validate_path};
+pub use realm::{ParseRealmError, Realm, ReferenceClass, can_reference};
+
 /// Maximum encoded size of an artifact body in v0.
 pub const MAX_ARTIFACT_BYTES: usize = 1024 * 1024;
 
@@ -18,6 +24,7 @@ pub enum FormatErrorCode {
     DuplicateKey,
     ResourceLimit,
     InvalidSchema,
+    InvalidArtifactId,
 }
 
 /// A rejected encoded value or artifact.
@@ -604,6 +611,12 @@ pub fn decode_project_genesis(bytes: &[u8]) -> Result<ProjectGenesis, FormatErro
 #[must_use]
 pub fn artifact_id(canonical_body: &[u8]) -> String {
     let digest = Sha256::digest(canonical_body);
+    format_artifact_id(&digest.into())
+}
+
+/// Formats one raw SHA-256 digest as a canonical artifact identifier.
+#[must_use]
+pub fn format_artifact_id(digest: &[u8; 32]) -> String {
     let mut identifier = String::with_capacity(71);
     identifier.push_str("sha256:");
     for byte in digest {
@@ -611,4 +624,46 @@ pub fn artifact_id(canonical_body: &[u8]) -> String {
         write!(&mut identifier, "{byte:02x}").expect("writing to String cannot fail");
     }
     identifier
+}
+
+/// Parses one canonical artifact identifier into its raw SHA-256 digest.
+///
+/// # Errors
+///
+/// Returns an error for the wrong algorithm, length, case, or non-hexadecimal
+/// text.
+pub fn parse_artifact_id(value: &str) -> Result<[u8; 32], FormatError> {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidArtifactId,
+            "artifact ID must use the sha256 algorithm prefix",
+        ));
+    };
+    if hex.len() != 64
+        || !hex
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(FormatError::new(
+            FormatErrorCode::InvalidArtifactId,
+            "artifact ID must contain 64 lowercase hexadecimal characters",
+        ));
+    }
+    let mut digest = [0_u8; 32];
+    for (output, pair) in digest.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        let nibble = |byte| match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            _ => None,
+        };
+        let (Some(high), Some(low)) = (nibble(pair[0]), nibble(pair[1])) else {
+            return Err(FormatError::new(
+                FormatErrorCode::InvalidArtifactId,
+                "artifact ID contains non-hexadecimal text",
+            ));
+        };
+        *output = (high << 4) | low;
+    }
+    Ok(digest)
 }

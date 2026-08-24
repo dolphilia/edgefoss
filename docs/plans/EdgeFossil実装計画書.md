@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1のlocal sliceが完了。canonical CBOR v0、artifact/project.genesis、path、tracking/publication policy、semantic rootのnormative draftを追加し、`project.genesis`をRust/TypeScriptで独立実装した。共通corpusはvalid 1件、invalid 7件で両実装が一致し、`pnpm check`とdry-run buildがNode.js 24で成功した。commit/CI確認後にI1をcloseし、I2としてtree/change/path/realmと50+50 corpusへ進む。G1は未達。詳細は[`I1 project.genesis local evidence`](../evidence/i1-project-genesis-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1はcommit `ef39b8de`とGitHub Actions CI成功をもって完了。I2aではpath、artifact ID、built-in realm flowをRust/TypeScriptで実装し、共通corpusはaccepted 55件、rejected 61件、realm decision 14件まで拡張した。tree/change、graph解決、署名、logical clock、semantic root propertyが残るためG1は未達。詳細は[`I1 project.genesis evidence`](../evidence/i1-project-genesis-local-2026-08-24.md)と[`I2a path/realm local evidence`](../evidence/i2a-path-realm-local-2026-08-24.md)を参照する。
 
 成果物:
 

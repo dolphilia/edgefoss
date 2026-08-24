@@ -2,9 +2,9 @@
 
 - Increment: I1
 - Base commit: `eb395ea50f117f9853d393f7fc459b0e6b8ba5b6`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `ef39b8de0dc59cf30e5425949fbd39885181e651`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
-- Result: local pass
+- Result: pass; account owner confirmed GitHub Actions CI success
 
 ## Demonstrated slice
 
@@ -42,7 +42,6 @@ environment restriction, not a test failure.
 
 ## Scope boundary
 
-This evidence completes the local I1 slice only. It does not pass G1. G1 still
+This evidence completes I1. It does not pass G1. G1 still
 requires tree/change/path/realm/signature/semantic-root implementations and at
-least 50 valid plus 50 invalid shared vectors, followed by commit and CI
-evidence.
+least 50 valid plus 50 invalid shared vectors.

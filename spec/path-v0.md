@@ -16,14 +16,21 @@ A path MUST satisfy all of the following:
 - no segment is `.` or `..`;
 - it contains no NUL, control character U+0001–U+001F, or U+007F;
 - no segment ends in ASCII space or `.`;
-- after removing a final extension and ASCII-case-folding, no segment is a
+- taking the portion before the first ASCII `.` and ASCII-case-folding it, no segment is a
   Windows device name: `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, or
   `LPT1`–`LPT9`.
 
 Backslash is an ordinary character, not a separator, but v0 rejects it to avoid
-platform-dependent checkout behavior. A colon is also rejected in every
-segment. Clients MUST validate before constructing an artifact and receivers
-MUST validate again.
+platform-dependent checkout behavior. The Windows-forbidden ASCII characters
+`<`, `>`, `:`, `"`, `\`, `|`, `?`, and `*` are rejected in every segment.
+Clients MUST validate before constructing an artifact and receivers MUST
+validate again.
+
+Validators report the first failure in this order: empty path, total byte
+length, NFC, absolute path, trailing slash, then for each segment from left to
+right: empty, dot segment, segment byte length, control character, forbidden
+character, trailing dot/space, Windows device name. Stable error names are
+defined by the shared path corpus.
 
 ## Collision rule
 

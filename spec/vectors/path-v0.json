@@ -1,0 +1,153 @@
+{
+  "profile": "edgefossil-path-v0",
+  "valid": [
+    "README.md",
+    "a",
+    ".gitignore",
+    "src/main.rs",
+    "src/lib/mod.ts",
+    "docs/design.md",
+    "docs/設計.md",
+    "café.txt",
+    "emoji/🚀.txt",
+    "space allowed/file name.txt",
+    "dot.allowed/file.tar.gz",
+    "under_score/name",
+    "dash-name/value",
+    "UPPER/lower/Mixed",
+    "数字/１２３.txt",
+    "greek/Ωμέγα.txt",
+    "arabic/مرحبا.txt",
+    "hebrew/שלום.txt",
+    "hangul/한글.txt",
+    "symbols/[draft].md",
+    "symbols/(final).md",
+    "at/@scope/package.json",
+    "plus/a+b.txt",
+    "equals/a=b.txt",
+    "comma/a,b.txt",
+    "semicolon/a;b.txt",
+    "apostrophe/it's.txt",
+    "hash/#topic.md",
+    "dollar/$value.txt",
+    "tilde/~backup",
+    "deep/one/two/three/four.txt",
+    "numbers/0/1/2/3",
+    "version/v1.2.3/release",
+    "percent/100%.txt",
+    "ampersand/a&b.txt",
+    "braces/{id}.txt",
+    "bang/!.txt",
+    "caret/a^b.txt",
+    "backtick/a`b.txt",
+    "underscore/__init__.py",
+    "leading-dot/.config/settings",
+    "multiple...dots/name...txt",
+    "cyrillic/Привет.txt",
+    "thai/สวัสดี.txt",
+    "devanagari/नमस्ते.txt",
+    "kana/カタカナ.txt",
+    "hiragana/ひらがな.txt",
+    "kanji/日本語.txt",
+    "accent/Ångström.txt",
+    "math/∑-result.txt",
+    { "repeat": "a", "count": 255 }
+  ],
+  "invalid": [
+    { "name": "empty", "path": "", "error": "empty_path" },
+    { "name": "absolute", "path": "/etc/passwd", "error": "absolute_path" },
+    { "name": "trailing-slash", "path": "src/", "error": "trailing_slash" },
+    {
+      "name": "double-slash",
+      "path": "src//main.rs",
+      "error": "empty_segment"
+    },
+    { "name": "dot", "path": ".", "error": "dot_segment" },
+    { "name": "dot-nested", "path": "src/./main.rs", "error": "dot_segment" },
+    { "name": "dotdot", "path": "..", "error": "dot_segment" },
+    {
+      "name": "dotdot-nested",
+      "path": "src/../secret",
+      "error": "dot_segment"
+    },
+    { "name": "nul", "path": "a\u0000b", "error": "control_character" },
+    { "name": "tab", "path": "a\tb", "error": "control_character" },
+    { "name": "newline", "path": "a\nb", "error": "control_character" },
+    {
+      "name": "unit-separator",
+      "path": "a\u001fb",
+      "error": "control_character"
+    },
+    { "name": "delete", "path": "a\u007fb", "error": "control_character" },
+    {
+      "name": "backslash",
+      "path": "src\\main.rs",
+      "error": "forbidden_character"
+    },
+    { "name": "colon", "path": "drive:c", "error": "forbidden_character" },
+    {
+      "name": "trailing-dot",
+      "path": "file.",
+      "error": "trailing_dot_or_space"
+    },
+    {
+      "name": "nested-trailing-dot",
+      "path": "dir./file",
+      "error": "trailing_dot_or_space"
+    },
+    {
+      "name": "trailing-space",
+      "path": "file ",
+      "error": "trailing_dot_or_space"
+    },
+    { "name": "con", "path": "CON", "error": "windows_reserved_name" },
+    { "name": "con-lower", "path": "con", "error": "windows_reserved_name" },
+    {
+      "name": "con-extension",
+      "path": "CON.txt",
+      "error": "windows_reserved_name"
+    },
+    { "name": "prn", "path": "PRN", "error": "windows_reserved_name" },
+    { "name": "aux", "path": "aux.log", "error": "windows_reserved_name" },
+    {
+      "name": "nul-device",
+      "path": "NUL.bin",
+      "error": "windows_reserved_name"
+    },
+    { "name": "com1", "path": "COM1", "error": "windows_reserved_name" },
+    {
+      "name": "com9-extension",
+      "path": "com9.txt",
+      "error": "windows_reserved_name"
+    },
+    { "name": "lpt1", "path": "LPT1", "error": "windows_reserved_name" },
+    {
+      "name": "lpt9-nested",
+      "path": "dir/Lpt9.out",
+      "error": "windows_reserved_name"
+    },
+    { "name": "decomposed-nfc", "path": "café.txt", "error": "non_nfc" },
+    { "name": "absolute-wins", "path": "/CON", "error": "absolute_path" },
+    { "name": "less-than", "path": "a<b", "error": "forbidden_character" },
+    { "name": "greater-than", "path": "a>b", "error": "forbidden_character" },
+    { "name": "quote", "path": "a\"b", "error": "forbidden_character" },
+    { "name": "pipe", "path": "a|b", "error": "forbidden_character" },
+    { "name": "question", "path": "a?b", "error": "forbidden_character" },
+    { "name": "asterisk", "path": "a*b", "error": "forbidden_character" },
+    { "name": "com2", "path": "COM2", "error": "windows_reserved_name" },
+    { "name": "com8", "path": "com8.log", "error": "windows_reserved_name" },
+    { "name": "lpt2", "path": "LPT2", "error": "windows_reserved_name" },
+    { "name": "lpt8", "path": "lpt8.log", "error": "windows_reserved_name" },
+    {
+      "name": "segment-256-bytes",
+      "path": { "repeat": "a", "count": 256 },
+      "error": "segment_too_long"
+    },
+    {
+      "name": "path-4097-bytes",
+      "path": { "repeat": "a", "count": 4097 },
+      "error": "path_too_long"
+    },
+    { "name": "com3", "path": "dir/COM3.txt", "error": "windows_reserved_name" }
+  ]
+}

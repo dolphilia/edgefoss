@@ -61,6 +61,7 @@ fn error_name(code: FormatErrorCode) -> &'static str {
         FormatErrorCode::DuplicateKey => "duplicate_key",
         FormatErrorCode::ResourceLimit => "resource_limit",
         FormatErrorCode::InvalidSchema => "invalid_schema",
+        FormatErrorCode::InvalidArtifactId => "invalid_artifact_id",
     }
 }
 

@@ -1,0 +1,103 @@
+{
+  "profile": "edgefossil-realm-v0",
+  "cases": [
+    {
+      "name": "public-parent-public",
+      "source": "public",
+      "target": "public",
+      "class": "parent",
+      "allowed": true
+    },
+    {
+      "name": "public-parent-members",
+      "source": "public",
+      "target": "members",
+      "class": "parent",
+      "allowed": false
+    },
+    {
+      "name": "members-parent-public",
+      "source": "members",
+      "target": "public",
+      "class": "parent",
+      "allowed": false
+    },
+    {
+      "name": "members-parent-members",
+      "source": "members",
+      "target": "members",
+      "class": "parent",
+      "allowed": true
+    },
+    {
+      "name": "local-parent-local",
+      "source": "local",
+      "target": "local",
+      "class": "parent",
+      "allowed": true
+    },
+    {
+      "name": "public-content-public",
+      "source": "public",
+      "target": "public",
+      "class": "content",
+      "allowed": true
+    },
+    {
+      "name": "public-content-members",
+      "source": "public",
+      "target": "members",
+      "class": "content",
+      "allowed": false
+    },
+    {
+      "name": "public-content-local",
+      "source": "public",
+      "target": "local",
+      "class": "content",
+      "allowed": false
+    },
+    {
+      "name": "members-content-public",
+      "source": "members",
+      "target": "public",
+      "class": "content",
+      "allowed": true
+    },
+    {
+      "name": "members-content-members",
+      "source": "members",
+      "target": "members",
+      "class": "content",
+      "allowed": true
+    },
+    {
+      "name": "members-content-local",
+      "source": "members",
+      "target": "local",
+      "class": "content",
+      "allowed": false
+    },
+    {
+      "name": "local-content-public",
+      "source": "local",
+      "target": "public",
+      "class": "content",
+      "allowed": true
+    },
+    {
+      "name": "local-content-members",
+      "source": "local",
+      "target": "members",
+      "class": "content",
+      "allowed": true
+    },
+    {
+      "name": "local-content-local",
+      "source": "local",
+      "target": "local",
+      "class": "content",
+      "allowed": true
+    }
+  ]
+}

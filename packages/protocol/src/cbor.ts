@@ -19,7 +19,8 @@ export type FormatErrorCode =
   | "invalid_text"
   | "duplicate_key"
   | "resource_limit"
-  | "invalid_schema";
+  | "invalid_schema"
+  | "invalid_artifact_id";
 
 export class FormatError extends Error {
   constructor(
