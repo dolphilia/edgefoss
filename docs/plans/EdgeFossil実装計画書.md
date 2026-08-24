@@ -621,7 +621,7 @@ Exit gate G3:
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
 
-現在の判定（2026-08-25）: 4条件すべてのlocal/remote証跡が揃ったためG3はgoであり、P3 `single-static`を完了した。P4a0のresource manifest、approval-gated provision/verify、U2承認がcommit/CI済みである。stagingの3 R2 bucketとQueue/DLQは承認済みplanからprovisionされ、read-only verifyもreadyになった。次はP4a Worker実装をcommit/CIで確定してから、manual OAuth staging deployとstateful health smokeを行う。
+現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0のresource manifest、approval-gated provision/verify、U2承認、staging resource作成も完了した。P4a Worker実装はcommit `85eb3e0`とGitHub Actions成功後にmanual OAuth deployされ、SQLite `RepositoryDO`、3 R2 bindings、GET/HEAD stateful healthがremoteでgreenになった。Queue/DLQにconsumerがないこともread-only確認したためP4aは完了である。次はU3に必要な最小CI deploy workflowをlocal実装・検証してからaccount ownerへtoken設定を促し、並行してP4b small-blob state machineのlocal設計へ進む。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -676,7 +676,8 @@ account ownerへmanual staging deployを案内する。詳細は
 [`ADR 0025`](../adr/0025-u2-gated-cloud-provisioning.md)、
 [`U2 evidence`](../evidence/u2-stateful-resource-approval-2026-08-25.md)、
 [`ADR 0026`](../adr/0026-minimal-single-project-stateful-topology.md)、
-[`P4a evidence`](../evidence/p4a-stateful-foundation-local-2026-08-25.md)を参照する。
+[`P4a local evidence`](../evidence/p4a-stateful-foundation-local-2026-08-25.md)、
+[`P4a remote evidence`](../evidence/p4a-stateful-foundation-remote-2026-08-25.md)を参照する。
 
 CI deploy checkpoint U3:
 

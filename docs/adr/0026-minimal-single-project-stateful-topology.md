@@ -73,8 +73,13 @@ operations. Queue resources remain idle until P4d.
   DO and R2 bindings;
 - read-only `cloud:verify` reports all three staging buckets private, both Queues
   ready, and the DO pending only the Worker deployment;
-- the first remote deployment and health smoke are deferred until this change is
-  committed and GitHub Actions is green.
+- the committed staging profile deployed successfully after GitHub Actions was
+  green; declarative reconciliation created or matched `RepositoryDO`;
+- independent GET/HEAD health requests returned HTTP 200 and schema version 1;
+- read-only Queue inspection found no consumer on either the event Queue or DLQ.
+
+The non-secret remote result is recorded in
+[`P4a remote evidence`](../evidence/p4a-stateful-foundation-remote-2026-08-25.md).
 
 References:
 

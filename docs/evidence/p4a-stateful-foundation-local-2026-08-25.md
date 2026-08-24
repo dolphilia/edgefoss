@@ -2,9 +2,11 @@
 
 - Increment: P4a Worker/RepositoryDO/R2 topology
 - Base commit: `e785d33191304c7f8e5a7c8b9b30801762151c4a`
+- Source state: committed as `85eb3e001101ac0f717af9785a80611ff0f6302e`
 - Environment authorized for later deployment: staging only
 - Remote mutation in this increment: none
-- Result: local implementation and verification complete; commit/CI pending
+- Result: local implementation, commit, and GitHub Actions complete; the later
+  remote deployment is recorded separately
 
 ## Current platform inputs
 
@@ -75,8 +77,9 @@ Generated Worker types contain `DurableObjectNamespace<RepositoryDO>` and three
 
 ## Gate and next action
 
-This is not remote P4a completion. After this change is committed, pushed, and
-GitHub Actions succeeds, the account owner can perform the first manual OAuth
-deployment. The next response should provide the exact staging deploy and
-read-only health verification commands. Production and CI credentials remain
-out of scope; U3 is not requested until the manual deployment and smoke pass.
+This local evidence alone was not remote P4a completion. The account owner then
+committed and pushed the change, confirmed GitHub Actions success, and completed
+the first manual OAuth deployment and stateful smoke. See the
+[`P4a remote evidence`](p4a-stateful-foundation-remote-2026-08-25.md).
+
+Production and CI credentials remained out of scope throughout this increment.
