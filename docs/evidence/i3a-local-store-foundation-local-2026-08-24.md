@@ -1,11 +1,10 @@
 # I3a local-store foundation evidence — 2026-08-24
 
 - Increment: I3a, SQLite migration and project-genesis persistence
-- Base commit: `f928d7358f73f34eca9690d8566d4c86d5909cf6`
-- Source state: local working tree; commit and CI confirmation pending
+- Commit: `a0146be181e808064ff90d111832eac7d4327fd6`
 - Environment: macOS, Node.js `v24.19.0`, pnpm `10.10.0`, Rust `1.94.1`
 - SQLite adapter: `rusqlite 0.40.2`, bundled SQLite
-- Result: local pass; commit and GitHub Actions CI confirmation pending
+- Result: pass; account owner confirmed GitHub Actions success
 
 ## Demonstrated slice
 

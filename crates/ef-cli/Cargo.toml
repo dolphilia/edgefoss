@@ -1,0 +1,20 @@
+[package]
+name = "ef-cli"
+description = "Local command-line interface for EdgeFossil"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "ef"
+path = "src/main.rs"
+
+[dependencies]
+ef-format = { path = "../ef-format" }
+ef-store-sqlite = { path = "../ef-store-sqlite" }
+getrandom = "0.4.3"
+
+[lints]
+workspace = true

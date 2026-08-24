@@ -510,7 +510,7 @@ Exit gate G0:
 
 P1で作るのは **v0 candidate** であり、外部互換性を約束するfreezeではない。実装前に曖昧さを減らす一方、local/cloud/syncで得た証拠を反映できる余地を残す。candidate bundleには`experimental` markerを入れ、一般利用者の永続dataとは区別する。
 
-実行状況（2026-08-24）: I1–I2fはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathを開始し、I3aでSQLite migration version 1、transactional project init、canonical genesisの再検証付き永続化を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)を参照する。
+実行状況（2026-08-24）: I1–I2fとI3aはcommit/CI済み。I2fでrealm-isolated `bundle-v0`、Rust/TypeScript verifier、production codecに依存しないbundle readerが揃い、G1はgoとなった。P2 local repository critical pathでは、I3aのSQLite基盤に続き、I3bとしてCLI `ef init` / `ef status`を実装中である。詳細は[`I2f bundle evidence`](../evidence/i2f-bundle-local-2026-08-24.md)、[`G1 bundle reassessment`](../reviews/g1-bundle-reassessment-2026-08-24.md)、[`I3a local-store evidence`](../evidence/i3a-local-store-foundation-local-2026-08-24.md)、[`I3b CLI evidence`](../evidence/i3b-cli-init-status-local-2026-08-24.md)を参照する。
 
 成果物:
 
@@ -540,7 +540,7 @@ Exit gate G1:
 
 ### P2: local repository alpha（7–10 person-weeks）
 
-実行状況（2026-08-24）: G1 go後の最初increment I3aとして、`ef-store-sqlite`、番号付きmigration、WAL/FULL/foreign-key接続policy、冪等project genesis init/reopenを実装した。local full check/buildは完了し、commit/CI確認待ちである。確認後にCLI `ef init`へ進む。
+実行状況（2026-08-24）: I3aの`ef-store-sqlite`、番号付きmigration、WAL/FULL/foreign-key接続policy、冪等project genesis init/reopenはcommit/CI済み。I3bでは、OS乱数nonceと所有者公開鍵からproject genesisを作る`ef init`、上位directoryを探索してidentity/schema/integrityを再検証する`ef status`を実装した。local full check/buildを通してcommit/CI確認待ちとし、その後はtracking stateを保存する次の小incrementへ進む。秘密鍵の生成・保存・署名はそのwrite pathと一緒に後続incrementで扱い、I3bのrepositoryには秘密情報を置かない。
 
 成果物:
 
