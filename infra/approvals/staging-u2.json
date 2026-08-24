@@ -1,0 +1,19 @@
+{
+  "format": "edgefossil-user-checkpoint-v0",
+  "checkpoint": "U2",
+  "environment": "staging",
+  "status": "approved",
+  "confirmedOn": "2026-08-25",
+  "sourceCommit": "23ff83b971ce3a248151b7fb69d71a8ed6171353",
+  "manifestDigest": "sha256:eb9e8f30df7070728d1e3aa433584b35b8a38bd82f03cbdd7bdfe8f181eede3d",
+  "decisions": {
+    "r2Subscription": "verified",
+    "legalOrContractualDataResidencyRequirement": "none",
+    "primaryUsageRegion": "Japan",
+    "r2Location": "automatic",
+    "r2Jurisdiction": null,
+    "durableObjectJurisdiction": null,
+    "durableObjectLocationHint": "apac-ne",
+    "resourceNamesAndBindings": "approved"
+  }
+}

@@ -445,11 +445,16 @@ pnpm run cloud:provision -- --env staging
 pnpm run cloud:verify -- --env staging
 ```
 
-`cloud:plan`はP4a0で実装済みであり、local manifestだけを読み、Cloudflareへ
-read/writeを行わない。`cloud:provision`と`cloud:verify`はまだ実装されて
-いないため、U2承認前には実行を促さない。planの
-`preflight.status`が`USER_ACTION_REQUIRED`、`checkpoint`が`U2`、
-`provisioningCommandAvailable`が`false`であることを確認する。
+`cloud:plan`はlocal manifestだけを読み、Cloudflareへread/writeを行わない。
+U2承認後に`cloud:provision`と`cloud:verify`も実装した。provisionは承認済み
+digestが一致しなければremote access前に停止し、既存resourceを全件確認して
+から不足分だけを作る。verifyはremote readだけを行う。productionには承認
+fileがないため、両commandとも停止する。
+
+実装変更のcommit/CI成功を確認するまではprovisionを実行しない。実行を案内
+された後は、最初に`cloud:provision`、続けて`cloud:verify`を実行し、後者が
+`readyForWorkerDeployment: true`になることを確認する。途中で失敗しても
+Dashboardで削除せず、出力を確認して同じprovisionを再実行する。
 
 planが表示する`manifestDigest`は承認対象を固定する。resource名や配置方針を
 変更するとdigestも変わるため、変更後は再reviewする。

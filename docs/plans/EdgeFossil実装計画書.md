@@ -621,7 +621,7 @@ Exit gate G3:
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
 
-現在の判定（2026-08-25）: 4条件すべてのlocal/remote証跡が揃ったためG3はgoであり、P3 `single-static`を完了した。P4a0のresource manifestと非mutating `cloud:plan`もlocal実装済みである。次はこの変更のcommit/CI確認後にU2を開始する。
+現在の判定（2026-08-25）: 4条件すべてのlocal/remote証跡が揃ったためG3はgoであり、P3 `single-static`を完了した。P4a0のresource manifestと非mutating `cloud:plan`もcommit/CI済みで、U2を通過した。次はapproval-gated provision/verify実装のcommit/CI確認後にstaging resourceをprovisionする。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -660,11 +660,17 @@ P4a0実行状況（2026-08-25）: staging/productionを分離した
 非mutatingかつremote readもしないmachine-readable `cloud:plan`をlocal実装した。
 staging plan digestは
 `sha256:eb9e8f30df7070728d1e3aa433584b35b8a38bd82f03cbdd7bdfe8f181eede3d`
-であり、preflightは意図どおり`USER_ACTION_REQUIRED / U2`で停止する。
-`cloud:provision`と`cloud:verify`は未実装である。従ってP4a0のlocal readinessは
-完了したが、U2は未通過でありstateful cloud mutationはまだ開始しない。詳細は
+であり、account ownerはcommit `23ff83b`のCI成功確認後、R2 subscription利用可、
+data residency要件なし、Automatic R2、DO jurisdictionなし、`apac-ne`、resource名、
+digestを承認したためU2は完了した。承認fileと一致しない限り停止する冪等な
+`cloud:provision`、read-only `cloud:verify`も実装し、live verifyで予定5 resourceが
+未作成であることを確認した。DOはP4a Worker deployまで
+`pending_worker_deploy`である。stateful cloud mutationはまだ開始しておらず、
+この実装のcommit/CI成功後にaccount ownerへstaging provisionを案内する。詳細は
 [`ADR 0024`](../adr/0024-reviewed-cloud-resource-manifest.md)と
-[`P4a0 evidence`](../evidence/p4a0-cloud-plan-local-2026-08-25.md)を参照する。
+[`P4a0 evidence`](../evidence/p4a0-cloud-plan-local-2026-08-25.md)、
+[`ADR 0025`](../adr/0025-u2-gated-cloud-provisioning.md)、
+[`U2 evidence`](../evidence/u2-stateful-resource-approval-2026-08-25.md)を参照する。
 
 CI deploy checkpoint U3:
 

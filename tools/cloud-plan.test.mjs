@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
+  applyCommittedApproval,
   createPlan,
   loadManifest,
   parseArguments,
@@ -60,6 +61,18 @@ test("plan is deterministic, non-mutating, and stops at U2", async () => {
   assert.equal(first.resources.dataPolicy.durableObjectLocationHint, "apac-ne");
 });
 
+test("committed staging approval advances only matching plan output", async () => {
+  const manifest = await loadManifest();
+  const staging = await applyCommittedApproval(createPlan(manifest, "staging"));
+  const production = await applyCommittedApproval(
+    createPlan(manifest, "production"),
+  );
+  assert.equal(staging.preflight.status, "APPROVED");
+  assert.equal(staging.preflight.provisioningCommandAvailable, true);
+  assert.equal(production.preflight.status, "USER_ACTION_REQUIRED");
+  assert.equal(production.preflight.provisioningCommandAvailable, false);
+});
+
 test("CLI emits machine-readable output without credentials", () => {
   const sentinel = "must-not-appear-in-cloud-plan";
   const result = spawnSync(
@@ -76,10 +89,7 @@ test("CLI emits machine-readable output without credentials", () => {
   );
   assert.equal(result.status, 0, result.stderr);
   assert.doesNotMatch(result.stdout, new RegExp(sentinel, "u"));
-  assert.equal(
-    JSON.parse(result.stdout).preflight.status,
-    "USER_ACTION_REQUIRED",
-  );
+  assert.equal(JSON.parse(result.stdout).preflight.status, "APPROVED");
 });
 
 test("CLI rejects missing, duplicate, and production-like environment input", () => {

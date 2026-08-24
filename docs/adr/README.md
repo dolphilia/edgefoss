@@ -28,5 +28,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0022](0022-assets-only-static-deployment-profile.md)      | Keep static deployment scriptless and explicit      | Accepted for single-static       |
 | [0023](0023-bounded-static-content-chunks.md)              | Pack current text into bounded static chunks        | Accepted for single-static       |
 | [0024](0024-reviewed-cloud-resource-manifest.md)           | Review cloud resources before provisioning          | Accepted for P4a0                |
+| [0025](0025-u2-gated-cloud-provisioning.md)                | Gate idempotent provisioning on exact U2 approval   | Accepted for P4a0                |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

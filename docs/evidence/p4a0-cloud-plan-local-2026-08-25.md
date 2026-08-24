@@ -2,10 +2,11 @@
 
 - Increment: P4a0 local resource manifest and non-mutating plan
 - Base commit: `63f57c349cdc99e6bbcbd4d1b15f9c9e022a12db`
-- Source state: local working tree; commit and CI confirmation pending
+- Source state: committed as `23ff83b971ce3a248151b7fb69d71a8ed6171353`
 - Cloud mutation: none
 - Remote reads: none
-- U2 state: `USER_ACTION_REQUIRED`; not yet complete
+- GitHub Actions: success confirmed by the account owner
+- U2 state: approved for the exact staging digest; see the separate U2 evidence
 
 ## Inputs checked
 
@@ -81,8 +82,8 @@ pnpm build
 
 ## Remaining gate
 
-This evidence makes U2 review possible; it does not pass U2. After this change
-is committed and CI is green, the account owner must enable the R2 subscription
-if necessary, confirm the data-residency decision, run the plan, and approve the
-exact staging digest. `cloud:provision` and `cloud:verify` remain deliberately
-absent until that checkpoint is recorded.
+This evidence made U2 review possible. The account owner subsequently approved
+the exact staging digest, and the R2 subscription was verified read-only. See
+[`U2 evidence`](u2-stateful-resource-approval-2026-08-25.md). Provisioning and
+verification are implemented in the next increment; no stateful resource was
+created by this evidence.

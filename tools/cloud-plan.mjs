@@ -326,10 +326,49 @@ export async function loadManifest() {
   return JSON.parse(await readFile(manifestPath, "utf8"));
 }
 
+export async function applyCommittedApproval(plan) {
+  const path = resolve(
+    repositoryRoot,
+    `infra/approvals/${plan.environment}-u2.json`,
+  );
+  let approval;
+  try {
+    approval = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return plan;
+    throw error;
+  }
+  if (
+    approval?.format !== "edgefossil-user-checkpoint-v0" ||
+    approval.checkpoint !== "U2" ||
+    approval.environment !== plan.environment ||
+    approval.status !== "approved" ||
+    approval.manifestDigest !== plan.manifestDigest
+  ) {
+    return plan;
+  }
+  return {
+    ...plan,
+    preflight: {
+      status: "APPROVED",
+      checkpoint: "U2",
+      approvalPath: `infra/approvals/${plan.environment}-u2.json`,
+      confirmedOn: approval.confirmedOn,
+      actions: [
+        "Commit and pass CI for the approval-gated provision and verify commands.",
+        "Then run cloud:provision for staging, followed by read-only cloud:verify.",
+        "Do not create, rename, expose, or delete resources in the Dashboard.",
+      ],
+      provisioningCommandAvailable: true,
+    },
+  };
+}
+
 async function main() {
   const environment = parseArguments(process.argv.slice(2));
   const manifest = await loadManifest();
-  console.log(JSON.stringify(createPlan(manifest, environment), null, 2));
+  const plan = await applyCommittedApproval(createPlan(manifest, environment));
+  console.log(JSON.stringify(plan, null, 2));
 }
 
 if (
