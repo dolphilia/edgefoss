@@ -808,10 +808,10 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 ### P4d schema 5 migration直前に行う
 
-- [ ] outbox coreのcommit後に通常CI成功を確認する。
-- [ ] manual staging deployでschema 5 healthだけを確認する。
-- [ ] このmigration gateではartifact publishと既存smokeを実行しない。
-- [ ] named stagingのQueue producer/consumerが未追加であることを確認する。
+- [x] outbox coreのcommit後に通常CI成功を確認する。
+- [x] manual staging deployでschema 5 healthだけを確認する。
+- [x] このmigration gateではartifact publishと既存smokeを実行しない。
+- [x] named stagingのQueue producer/consumerが未追加であることを確認する。
 
 ### 必要になった時だけ行う
 
@@ -861,10 +861,11 @@ repositoryへ保存してはいけないもの:
 ## 17. 最終提案
 
 2026-08-25時点でNode.js 24、account安全確認、Wrangler OAuth、workers.dev、R2、
-staging resources、CI deploy token、staging owner secret、schema 4 migrationまでは完了した。
-publish adapterのdeployとsynthetic remote publishも完了した。次のP4d local実装中に新しく
-準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへconsumerを
-追加する段階では、event contract、failure injection、dry-run、commit/通常CIを先に通し、
+staging resources、CI deploy token、staging owner secret、schema 5 migrationまでは完了した。
+publish adapterのdeploy、synthetic remote publish、Queueを結線しないtransactional outboxの
+remote migrationも完了した。次のdelivery observation/smokeのlocal実装中に新しく
+準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへproducer/consumerを
+追加する段階では、observation contract、failure injection、dry-run、commit/通常CIを先に通し、
 remote有効化前に改めて効果を案内する。production secret、R2 S3 credential、custom domainは
 まだ作らない。
 
