@@ -148,8 +148,8 @@ export async function smokeWorkerPublish({ origin, token, fetchImpl = fetch }) {
   const health = await requestJson(fetchImpl, `${origin}/health`, {
     method: "GET",
   });
-  if (health?.components?.repository?.schemaVersion !== 4) {
-    fail("health did not report repository schema version 4");
+  if (health?.components?.repository?.schemaVersion !== 5) {
+    fail("health did not report repository schema version 5");
   }
 
   const identity = await signingIdentity();
@@ -234,7 +234,7 @@ export async function smokeWorkerPublish({ origin, token, fetchImpl = fetch }) {
     realm: "public",
     refGeneration: change.ref.generation,
     referencedBlobId: REFERENCED_BLOB_ID,
-    repositorySchemaVersion: 4,
+    repositorySchemaVersion: 5,
     repoSequence: change.repoSequence,
     retryConverged: true,
     state: "published",

@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 11（P4c remote canonical publish完了を反映）
+改訂: Revision 12（P4d schema 5 transactional outbox local実装を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -633,6 +633,9 @@ adapterとreview可能なdeterministic staging smokeをlocal実装した。次�
 通過した。remote deploy証跡のcommit/通常CI後、account ownerが恒久的なsynthetic staging
 project初期化効果を明示承認し、publish smokeはsequence 1–3、public ref generation 1、
 exact retry収束、新規R2 writeなしで成功した。P4cは完了し、次はP4d recoveryをlocal設計する。
+P4dの最初のincrementとしてschema 5 transactional outbox、bounded DO alarm drain、
+idempotent Queue consumer coreをlocal実装し、full local gateを通過した。次はcommit/通常CI後、Queue bindingを
+追加せずschema 4から5へのmigrationだけをstagingで確認する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -799,6 +802,19 @@ public changeをrepo sequence 1–3でacceptし、public `heads/main`をgenerati
 これによりP4cは完了した。G4はまだ未達であり、次はP4dでtransactional outbox、DO alarm、
 Queue/DLQ delivery、停止・復旧failure matrixをcanonical writeから分離してlocal実装する。
 詳細は[`remote publish evidence`](../evidence/p4c-canonical-publish-adapter-remote-2026-08-25.md)を参照する。
+
+P4d transactional outbox local実行状況（2026-08-25）: 新しいcanonical repo sequenceごとに
+stable authority eventをpublish transaction内でpending保存するschema 5を実装した。DO alarmは
+最大10件を順序どおりQueueへ送り、send成功後だけenqueuedへ更新する。失敗時はattemptを残し、
+pendingのままbounded backoffで再armする。consumer coreはstored outbox identityを検証し、
+accepted/duplicateを明示ack、unknown eventをdelay付きretryにする。11件は10+1の二alarmで
+drainし、Queue failure後の同一event recoveryもlocal Workers runtimeでgreenである。default
+local環境にだけproducer bindingを持ち、named staging/productionにはproducerもconsumerもない。
+コード、テスト、build、startup profile、named staging dry-runを含むfull local gateは通過した。
+次gateはcommit/通常CI、その後のschema 5 migration-only staging deployである。
+artifact publish、既存smoke再実行、Queue remote有効化はまだ行わない。詳細は
+[`ADR 0032`](../adr/0032-transactional-authority-outbox-and-bounded-alarm-drain.md)と
+[`P4d local evidence`](../evidence/p4d-transactional-outbox-local-2026-08-25.md)を参照する。
 
 成果物:
 

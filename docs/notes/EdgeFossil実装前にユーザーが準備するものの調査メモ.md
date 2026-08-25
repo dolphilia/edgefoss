@@ -806,6 +806,13 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] synthetic staging projectの恒久的な初期化効果を確認する。
 - [x] 案内後にpublish smokeを一度実行し、tokenをunsetする。
 
+### P4d schema 5 migration直前に行う
+
+- [ ] outbox coreのcommit後に通常CI成功を確認する。
+- [ ] manual staging deployでschema 5 healthだけを確認する。
+- [ ] このmigration gateではartifact publishと既存smokeを実行しない。
+- [ ] named stagingのQueue producer/consumerが未追加であることを確認する。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。

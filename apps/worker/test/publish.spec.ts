@@ -7,6 +7,7 @@ import {
   encodeTree,
 } from "@edgefoss/protocol";
 import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -185,6 +186,15 @@ describe("RepositoryDO canonical artifact publication", () => {
         first,
       );
     }
+    await runInDurableObject(repository, (_instance, state) => {
+      expect(
+        state.storage.sql
+          .exec<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM authority_outbox",
+          )
+          .one().count,
+      ).toBe(3);
+    });
 
     await expect(
       repository.publishArtifact({

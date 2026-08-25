@@ -7,11 +7,22 @@ import {
   type PublishArtifactInput,
   type PublishArtifactKind,
 } from "./artifact-publish.js";
+import {
+  authorityEvent,
+  drainOutbox,
+  insertOutboxEvent,
+  readOutboxStatus,
+  recordAuthorityEventDelivery,
+  validateAuthorityEvent,
+  type AuthorityEventV0,
+  type OutboxStatus,
+} from "./outbox.js";
 
 export type {
   PublishArtifactInput,
   PublishRefInput,
 } from "./artifact-publish.js";
+export type { AuthorityEventV0, OutboxStatus } from "./outbox.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -21,7 +32,7 @@ const JSON_HEADERS = {
 
 const SINGLE_PROJECT_AUTHORITY = "edgefoss-single-project-v0";
 const OWNER_PRINCIPAL = "owner";
-const REPOSITORY_SCHEMA_VERSION = 4;
+const REPOSITORY_SCHEMA_VERSION = 5;
 const MAX_SMALL_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const MAX_PUBLISH_JSON_BODY_BYTES = 2 * 1024 * 1024;
@@ -322,6 +333,32 @@ export class RepositoryDO extends DurableObject<Env> {
       schemaVersion = 4;
     }
 
+    if (schemaVersion === 4) {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS authority_outbox (
+          event_id TEXT PRIMARY KEY,
+          repo_seq INTEGER NOT NULL UNIQUE,
+          event_json TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('pending', 'enqueued')),
+          attempts INTEGER NOT NULL CHECK (attempts >= 0),
+          last_attempt_at INTEGER,
+          enqueued_at INTEGER
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS authority_event_deliveries (
+          event_id TEXT PRIMARY KEY,
+          repo_seq INTEGER NOT NULL UNIQUE,
+          delivered_at INTEGER NOT NULL
+        ) STRICT;
+      `);
+      this.ctx.storage.sql.exec(
+        "UPDATE edgefoss_meta SET value = ? WHERE key = ?",
+        "5",
+        "schema_version",
+      );
+      schemaVersion = 5;
+    }
+
     if (schemaVersion !== REPOSITORY_SCHEMA_VERSION) {
       throw new Error("RepositoryDO schema version is unsupported.");
     }
@@ -504,7 +541,9 @@ export class RepositoryDO extends DurableObject<Env> {
       validatePrincipal(input.principalId);
       validateUuid(input.operationId, "operation_id");
       const prepared = await preparePublishArtifact(input);
-      return this.#commitPublishedArtifact(prepared);
+      const result = this.#commitPublishedArtifact(prepared);
+      if (result.status === "accepted") await this.#ensureOutboxAlarm();
+      return result;
     } catch (error) {
       const code = publishRejectionCode(error);
       if (code) return { code, status: "rejected" };
@@ -682,6 +721,18 @@ export class RepositoryDO extends DurableObject<Env> {
         };
       }
 
+      insertOutboxEvent(
+        this.ctx.storage.sql,
+        authorityEvent({
+          artifactId: prepared.artifactId,
+          kind: prepared.kind,
+          policyEpoch,
+          realm: prepared.realm,
+          ref: acceptedRef,
+          repoSequence,
+        }),
+      );
+
       return this.#storePublishOperation(prepared, {
         artifactId: prepared.artifactId,
         kind: prepared.kind,
@@ -692,6 +743,54 @@ export class RepositoryDO extends DurableObject<Env> {
         status: "accepted",
       });
     });
+  }
+
+  outboxStatus(): OutboxStatus {
+    return readOutboxStatus(this.ctx.storage);
+  }
+
+  async armOutbox(): Promise<OutboxStatus> {
+    await this.#ensureOutboxAlarm();
+    return this.outboxStatus();
+  }
+
+  recordEventDelivery(event: AuthorityEventV0): {
+    status: "accepted" | "duplicate" | "unknown";
+  } {
+    return {
+      status: recordAuthorityEventDelivery(this.ctx.storage, event, Date.now()),
+    };
+  }
+
+  override async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {
+    const queue = this.env.EVENTS;
+    if (queue === undefined) return;
+    try {
+      const result = await drainOutbox(this.ctx.storage, queue, Date.now());
+      if (result.remaining > 0) {
+        await this.ctx.storage.setAlarm(Date.now() + 1_000);
+      }
+    } catch (error) {
+      const retryCount = alarmInfo?.retryCount ?? 0;
+      const delayMilliseconds = Math.min(60_000, 2_000 * 2 ** retryCount);
+      console.error(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : "unknown_error",
+          message: "authority outbox drain failed",
+          retryCount,
+        }),
+      );
+      await this.ctx.storage.setAlarm(Date.now() + delayMilliseconds);
+    }
+  }
+
+  async #ensureOutboxAlarm(): Promise<void> {
+    if (this.env.EVENTS === undefined || this.outboxStatus().pending === 0) {
+      return;
+    }
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + 1_000);
+    }
   }
 
   #validateArtifactReferences(prepared: PreparedPublishArtifact): void {
@@ -1650,4 +1749,26 @@ export default {
       404,
     );
   },
-} satisfies ExportedHandler<Env>;
+  async queue(batch: MessageBatch<AuthorityEventV0>, env: Env): Promise<void> {
+    const repository = repositoryStub(env);
+    for (const message of batch.messages) {
+      try {
+        validateAuthorityEvent(message.body);
+        const result = await repository.recordEventDelivery(message.body);
+        if (result.status === "unknown") {
+          throw new Error("authority_event_unknown");
+        }
+        message.ack();
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            error: error instanceof Error ? error.message : "unknown_error",
+            message: "authority event delivery failed",
+            queue: batch.queue,
+          }),
+        );
+        message.retry({ delaySeconds: 30 });
+      }
+    }
+  },
+} satisfies ExportedHandler<Env, AuthorityEventV0>;

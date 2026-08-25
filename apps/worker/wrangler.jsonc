@@ -49,6 +49,14 @@
       "bucket_name": "edgefoss-dev-exports",
     },
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "EVENTS",
+        "queue": "edgefoss-dev-events",
+      },
+    ],
+  },
   "env": {
     "staging": {
       "name": "edgefoss-staging",
@@ -80,6 +88,10 @@
           "bucket_name": "edgefoss-staging-exports",
         },
       ],
+      "queues": {
+        "producers": [],
+        "consumers": [],
+      },
     },
     "production": {
       "name": "edgefoss-production",
@@ -112,6 +124,10 @@
           "bucket_name": "edgefoss-production-exports",
         },
       ],
+      "queues": {
+        "producers": [],
+        "consumers": [],
+      },
     },
   },
 }

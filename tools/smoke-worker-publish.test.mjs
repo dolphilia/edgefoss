@@ -38,7 +38,7 @@ test("publish smoke proves all three publication retries converge", async () => 
   const fetchImpl = async (url, init) => {
     calls.push({ init, url });
     if (new URL(url).pathname === "/health") {
-      return response({ components: { repository: { schemaVersion: 4 } } });
+      return response({ components: { repository: { schemaVersion: 5 } } });
     }
     const body = JSON.parse(init.body);
     if (body.operationId !== currentBody?.operationId) {
