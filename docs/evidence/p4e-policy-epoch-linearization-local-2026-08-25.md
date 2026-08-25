@@ -63,5 +63,7 @@ The focused tests prove:
 
 There is no new HTTP route, schema migration, binding, secret, Cloudflare
 resource, remote Worker version, Queue message, R2 object, or production change.
-No user action is required. The next gate is commit and ordinary CI. G4 remains
-no-go until that gate confirms this local authority primitive.
+No user action was required. Commit `3bbd9a1` and its ordinary GitHub Actions
+run were confirmed successful by the account owner. G4 is therefore go. Full
+member ACL and credential revocation remain P6 scope; P4e proves the authority
+ordering fence and does not claim those later features.

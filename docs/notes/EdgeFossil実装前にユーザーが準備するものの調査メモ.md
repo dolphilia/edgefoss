@@ -855,7 +855,16 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] HTTP route、schema migration、remote deploy、Queue/R2変更をこのincrementに含めない。
 - [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P4e実装をcommitし、通常CIを通す。
+- [x] P4e実装をcommitし、通常CIを通す。
+
+### P5a0 public inventory内部契約で行う
+
+- [x] G4のcommit/通常CI成功を確認してからP5へ進む。
+- [x] 最初はinternal RPCとlocal Workers runtime testに限定する。
+- [x] HTTP route、schema migration、remote deploy、Queue/R2変更を含めない。
+- [x] 外部opaque cursor、artifact transfer、local importは別incrementとする。
+- [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
+- [ ] P5a0実装をcommitし、通常CIを通す。
 
 ### 必要になった時だけ行う
 

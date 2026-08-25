@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 20（P4e policy-epoch linearizationのlocal実装を反映）
+改訂: Revision 21（G4完了とP5a0 public inventory内部契約を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -649,12 +649,13 @@ duplicate、out-of-order、mixed valid/invalid batch、attempt 1–4 retry、log
 続くbehavior-preserving staging deployもschema 5とQueue設定を維持し、既存sequence 4は
 `delivered`、send attempts 1、totalはpending 0/enqueued 1/delivered 1のままであった。
 remote poison messageは使用せず、実DLQ移送は観測済みと主張しない。P4dは完了した。
-G4はACL revokeとconcurrent publishのauthority orderが未実装のためまだno-goであり、
-次はcloud surfaceを増やさないP4e policy linearizationをlocalで実装する。
+G4はP4eのcommitと通常CI成功をもってgoとなった。
 P4eでは既存schema 5の`policy_epoch`とnamespaced meta operationを使うinternal RPCを追加し、
 100回再送、cross-kind operation ID衝突、stale result保持、publish競合、既存canonical stateの
 非破壊性をWorkers runtimeで証明した。HTTP route、migration、binding、remote変更はない。
-次gateはcommitと通常CIである。
+P5a0ではcloud surfaceを増やさず、anonymous public viewの`HELLO`とbounded paged
+`INVENTORY`をinternal RPCとしてlocal実装した。full local gateとnamed staging/production
+dry-runはgreenであり、次gateはcommitと通常CIである。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -667,7 +668,7 @@ P4は一括実装しない。
 | P4b upload | small blobのstaging→verify→finalizeと再送が安全 |
 | P4c publish | 完了。artifact acceptance、realm ref CAS、operation dedupeが一transaction |
 | P4d recovery | 完了。outbox/alarm/Queue smokeとbounded failure matrixがgreen |
-| P4e G4 policy closure | local実装完了。commit/通常CI待ち |
+| P4e G4 policy closure | 完了。commit `3bbd9a1`と通常CI成功を確認 |
 
 stateful resource作成checkpoint U2:
 
@@ -926,10 +927,9 @@ Exit gate G4:
 - visible artifactがmissing/unverified blobを参照しない。
 - Queueを停止してもcanonical writeは成功し、復旧後outboxがdrainする。
 
-現在の判定（2026-08-25）: P4dまでの条件は証跡が揃った。R2/DO/response/Queue境界、
-100回再送、missing/unverified blob、Queue送信失敗後のrecoveryはgreenである。ただし、
-ACL revokeに相当するpolicy mutationとconcurrent publishのlinearizationは未実装であるため
-G4はno-goである。P5には進まず、P4eで次をlocalで証明する。
+現在の判定（2026-08-25）: P4dまでの条件に加え、P4eでACL revokeに相当する
+policy mutationとconcurrent publishのlinearizationを証明した。commit `3bbd9a1`と通常CIも
+成功したためG4はgoであり、P5aへ進める。
 
 - policy mutationはexpected epochとoperation IDを持ち、同一operation再送は一つの結果へ収束する。
 - publishとpolicy mutationの競合はDOが決めた順で一方が受理され、古いepochのpublishは安定したconflictになる。
@@ -945,7 +945,7 @@ fenceがepoch 1へ進むか、fenceが先に進んでpublishがstable `policy_co
 どちらかに限定される。既存artifact/receipt/outboxは破壊されない。schema 5、HTTP surface、
 Queue/R2、staging/production設定は不変である。full local gateはgreenで、詳細は
 [`P4e local evidence`](../evidence/p4e-policy-epoch-linearization-local-2026-08-25.md)を参照する。
-G4はこの変更のcommit/通常CI成功までno-goを維持する。full member ACLと具体的なmember
+commit `3bbd9a1`と通常CI成功を確認したためG4はgoである。full member ACLと具体的なmember
 credential revokeはP6の範囲であり、P4eで実行済みとは主張しない。
 
 ### P5: sync v0（6–9 person-weeks）
@@ -968,6 +968,24 @@ P5は転送方向とconflictを分ける。
 - promised blobを使う`metadata/source/history/complete` clone profile
 - local A、local B、cloud間のconflict保持
 - server receipt/accepted-rejected result
+
+P5aはさらに小さく分割する。
+
+| increment | 完了状態 |
+|---|---|
+| P5a0 internal public inventory | local実装完了。commit/通常CI待ち |
+| P5a1 external read adapter | opaque cursor envelope、anonymous HTTP read、adapter tests |
+| P5a2 transfer/import | public artifact body transfer、fresh local import、resume |
+
+P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
+anonymous public viewだけのprotocol 0 `HELLO`とpaged `INVENTORY`をinternal RPCとして固定した。
+inventory itemはartifact IDとkindだけで、global receipt sequence、size、path、blob reference、
+members countを返さない。最初のpageでpublic artifactだけのsnapshot境界を固定し、内部anchorは
+project、principal、view、protocol、policy epochへbindする。schema 5、HTTP surface、Queue/R2、
+staging/production設定は不変である。focused testとfull local gateはgreenで、詳細は
+[`P5a0 local evidence`](../evidence/p5a0-public-sync-inventory-local-2026-08-25.md)を参照する。
+外部opaque token、HTTP adapter、`TRANSFER`、local importは未実装であり、P5a clone/pull完了とは
+主張しない。
 
 API原則:
 

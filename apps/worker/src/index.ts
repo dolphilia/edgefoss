@@ -21,6 +21,14 @@ import {
   type OutboxStatus,
 } from "./outbox.js";
 import { consumeAuthorityEventMessage } from "./queue-consumer.js";
+import {
+  negotiatePublicSync,
+  readPublicInventory,
+  type PublicInventoryInput,
+  type PublicInventoryResult,
+  type SyncHelloInput,
+  type SyncHelloResult,
+} from "./sync-inventory.js";
 
 export type {
   PublishArtifactInput,
@@ -32,6 +40,14 @@ export type {
   OutboxObservation,
   OutboxStatus,
 } from "./outbox.js";
+export type {
+  PublicInventoryAnchorV0,
+  PublicInventoryInput,
+  PublicInventoryItemV0,
+  PublicInventoryResult,
+  SyncHelloInput,
+  SyncHelloResult,
+} from "./sync-inventory.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -645,6 +661,16 @@ export class RepositoryDO extends DurableObject<Env> {
         status: "accepted",
       });
     });
+  }
+
+  syncHello(input: SyncHelloInput): SyncHelloResult {
+    return negotiatePublicSync(this.ctx.storage.sql, input);
+  }
+
+  publicInventory(input: PublicInventoryInput): PublicInventoryResult {
+    return this.ctx.storage.transactionSync(() =>
+      readPublicInventory(this.ctx.storage.sql, input),
+    );
   }
 
   #commitPublishedArtifact(
