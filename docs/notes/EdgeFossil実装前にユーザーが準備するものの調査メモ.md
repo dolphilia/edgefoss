@@ -801,8 +801,8 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 ### P4c最初のremote publish直前に行う
 
-- [ ] publish adapterのcommit後に通常CI成功を確認する。
-- [ ] manual staging deployとschema 4 stateful health成功を確認する。
+- [x] publish adapterのcommit後に通常CI成功を確認する。
+- [x] manual staging deployとschema 4 stateful health成功を確認する。
 - [ ] synthetic staging projectの恒久的な初期化効果を確認する。
 - [ ] 案内後にpublish smokeを一度実行し、tokenをunsetする。
 

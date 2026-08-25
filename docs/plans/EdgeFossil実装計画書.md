@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 9（P4c owner publish adapter local実装を反映）
+改訂: Revision 10（P4c owner publish adapter staging deploy gate完了を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -629,8 +629,9 @@ U2、U3、U3aは完了した。P4bではowner認証済みHTTP adapterをschema 3
 operation dedupeを一つにしたschema 4 internal transactionをlocal実装し、remote publishを
 行わずschema 3から4へのmigrationとhealthを確認した。続いてowner認証付きbounded publish
 adapterとreview可能なdeterministic staging smokeをlocal実装した。次はこの変更のcommitと
-通常CI成功後、schema 4のままmanual staging deployし、remote write効果を再確認してから
-一度だけpublish smokeを実行する。
+通常CIに成功し、schema 4のままmanual staging deployとstateful health、非認証401 probeを
+通過した。次はremote deploy証跡のcommit/通常CI後、恒久的なsynthetic staging project
+初期化効果をaccount ownerが明示確認してから一度だけpublish smokeを実行する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -779,6 +780,14 @@ account ownerが「staging projectの恒久初期化、3 artifacts/receipts/oper
 新規R2 writeなし」を確認した場合にだけsmokeを案内する。詳細は
 [`ADR 0031`](../adr/0031-owner-authenticated-canonical-publish-adapter.md)と
 [`local adapter evidence`](../evidence/p4c-canonical-publish-adapter-local-2026-08-25.md)を参照する。
+
+P4c owner publish adapter remote deploy状況（2026-08-25）: adapter commitの通常CI成功後、
+`main`からmanual staging deployを実行し、deployとstateful healthが成功した。repositoryは
+schema 4を維持し、非認証`POST /api/v0/artifacts`はHTTP 401、`cache-control: no-store`、
+Bearer challengeを返した。これはroute反映と認証境界の非破壊確認であり、artifact、receipt、
+publish operation、ref、R2 objectはまだ作成していない。Queue consumerも追加していない。
+次gateはこの証跡のcommit/通常CIと、account ownerによるsynthetic初期化効果の明示確認である。
+詳細は[`remote adapter deploy evidence`](../evidence/p4c-canonical-publish-adapter-remote-deploy-2026-08-25.md)を参照する。
 
 成果物:
 
