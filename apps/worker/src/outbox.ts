@@ -24,6 +24,26 @@ export interface OutboxStatus {
   pending: number;
 }
 
+export interface OutboxEventObservation {
+  deliveredAt: number | null;
+  enqueuedAt: number | null;
+  lastSendAttemptAt: number | null;
+  phase: "pending" | "enqueued" | "delivered";
+  repoSequence: number;
+  sendAttempts: number;
+}
+
+export interface OutboxObservation {
+  event: OutboxEventObservation | null;
+  totals: OutboxStatus;
+}
+
+export interface OutboxArtifactMatch {
+  exists: boolean;
+  matches: boolean;
+  repoSequence: number;
+}
+
 export interface DrainOutboxResult {
   attempted: number;
   enqueued: number;
@@ -91,6 +111,77 @@ export function readOutboxStatus(storage: DurableObjectStorage): OutboxStatus {
     delivered,
     enqueued: counts.find((row) => row.state === "enqueued")?.count ?? 0,
     pending: counts.find((row) => row.state === "pending")?.count ?? 0,
+  };
+}
+
+export function readOutboxObservation(
+  storage: DurableObjectStorage,
+  repoSequence: number,
+): OutboxObservation {
+  if (!Number.isSafeInteger(repoSequence) || repoSequence < 1) {
+    throw new Error("outbox_sequence_invalid");
+  }
+  const row = storage.sql
+    .exec<{
+      attempts: number;
+      delivered_at: number | null;
+      enqueued_at: number | null;
+      last_attempt_at: number | null;
+      repo_seq: number;
+      state: "pending" | "enqueued";
+    }>(
+      `SELECT o.repo_seq, o.state, o.attempts, o.last_attempt_at,
+              o.enqueued_at, d.delivered_at
+         FROM authority_outbox AS o
+         LEFT JOIN authority_event_deliveries AS d
+           ON d.event_id = o.event_id
+        WHERE o.repo_seq = ?`,
+      repoSequence,
+    )
+    .toArray()[0];
+  return {
+    event: row
+      ? {
+          deliveredAt: row.delivered_at,
+          enqueuedAt: row.enqueued_at,
+          lastSendAttemptAt: row.last_attempt_at,
+          phase:
+            row.delivered_at !== null
+              ? "delivered"
+              : row.state === "enqueued"
+                ? "enqueued"
+                : "pending",
+          repoSequence: row.repo_seq,
+          sendAttempts: row.attempts,
+        }
+      : null,
+    totals: readOutboxStatus(storage),
+  };
+}
+
+export function readOutboxArtifactMatch(
+  storage: DurableObjectStorage,
+  repoSequence: number,
+  artifactId: string,
+): OutboxArtifactMatch {
+  if (!Number.isSafeInteger(repoSequence) || repoSequence < 1) {
+    throw new Error("outbox_sequence_invalid");
+  }
+  if (!/^sha256:[0-9a-f]{64}$/u.test(artifactId)) {
+    throw new Error("outbox_artifact_invalid");
+  }
+  const row = storage.sql
+    .exec<{ event_json: string }>(
+      "SELECT event_json FROM authority_outbox WHERE repo_seq = ?",
+      repoSequence,
+    )
+    .toArray()[0];
+  return {
+    exists: row !== undefined,
+    matches:
+      row !== undefined &&
+      parseAuthorityEvent(row.event_json).artifact.id === artifactId,
+    repoSequence,
   };
 }
 

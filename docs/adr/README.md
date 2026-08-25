@@ -36,5 +36,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0030](0030-transactional-canonical-artifact-publication.md)           | Publish canonical artifacts and refs atomically     | Accepted for P4c                 |
 | [0031](0031-owner-authenticated-canonical-publish-adapter.md)          | Expose bounded owner artifact publication           | Accepted for P4c                 |
 | [0032](0032-transactional-authority-outbox-and-bounded-alarm-drain.md) | Persist and drain authority events safely           | Accepted for P4d                 |
+| [0033](0033-owner-only-outbox-observation-and-single-event-smoke.md)   | Observe delivery without exposing events            | Accepted for P4d                 |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

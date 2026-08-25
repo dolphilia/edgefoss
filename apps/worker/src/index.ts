@@ -11,10 +11,14 @@ import {
   authorityEvent,
   drainOutbox,
   insertOutboxEvent,
+  readOutboxArtifactMatch,
+  readOutboxObservation,
   readOutboxStatus,
   recordAuthorityEventDelivery,
   validateAuthorityEvent,
   type AuthorityEventV0,
+  type OutboxArtifactMatch,
+  type OutboxObservation,
   type OutboxStatus,
 } from "./outbox.js";
 
@@ -22,7 +26,12 @@ export type {
   PublishArtifactInput,
   PublishRefInput,
 } from "./artifact-publish.js";
-export type { AuthorityEventV0, OutboxStatus } from "./outbox.js";
+export type {
+  AuthorityEventV0,
+  OutboxArtifactMatch,
+  OutboxObservation,
+  OutboxStatus,
+} from "./outbox.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -37,6 +46,7 @@ const MAX_SMALL_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const MAX_PUBLISH_JSON_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_SIGNATURE_BYTES = 1024;
+const MAX_OUTBOX_MATCH_BODY_BYTES = 256;
 const OWNER_TOKEN_PATTERN = /^efoss_owner_v0_[A-Za-z0-9_-]{43}$/;
 
 export type CloudRealm = "public" | "members";
@@ -747,6 +757,17 @@ export class RepositoryDO extends DurableObject<Env> {
 
   outboxStatus(): OutboxStatus {
     return readOutboxStatus(this.ctx.storage);
+  }
+
+  outboxObservation(repoSequence: number): OutboxObservation {
+    return readOutboxObservation(this.ctx.storage, repoSequence);
+  }
+
+  outboxArtifactMatch(
+    repoSequence: number,
+    artifactId: string,
+  ): OutboxArtifactMatch {
+    return readOutboxArtifactMatch(this.ctx.storage, repoSequence, artifactId);
   }
 
   async armOutbox(): Promise<OutboxStatus> {
@@ -1658,6 +1679,97 @@ async function handlePublishApi(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ publication: result }, status);
 }
 
+async function handleOutboxApi(
+  request: Request,
+  env: Env,
+  pathname: string,
+): Promise<Response> {
+  const authorizationFailure = await authorizeOwner(request, env);
+  if (authorizationFailure) return authorizationFailure;
+  const match = /^\/api\/v0\/outbox\/([1-9][0-9]{0,15})(\/match)?$/u.exec(
+    pathname,
+  );
+  if (!match?.[1]) {
+    return errorResponse(
+      "not_found",
+      "The requested resource does not exist.",
+      404,
+    );
+  }
+  const repoSequence = Number(match[1]);
+  if (!Number.isSafeInteger(repoSequence)) {
+    return errorResponse(
+      "outbox_sequence_invalid",
+      "The repository sequence is invalid.",
+      400,
+    );
+  }
+  if (match[2] === "/match") {
+    if (request.method !== "POST") {
+      return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+        allow: "POST",
+      });
+    }
+    return jsonResponse({
+      match: await repositoryStub(env).outboxArtifactMatch(
+        repoSequence,
+        await readOutboxMatchDeclaration(request),
+      ),
+    });
+  }
+  if (request.method !== "GET") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "GET",
+    });
+  }
+  return jsonResponse({
+    outbox: await repositoryStub(env).outboxObservation(repoSequence),
+  });
+}
+
+async function readOutboxMatchDeclaration(request: Request): Promise<string> {
+  if (
+    request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
+  ) {
+    throw new HttpRequestError(
+      "content_type_invalid",
+      "Content-Type must be application/json.",
+      415,
+    );
+  }
+  const bytes = await readBoundedBody(request, MAX_OUTBOX_MATCH_BODY_BYTES);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new HttpRequestError(
+      "outbox_match_invalid",
+      "The outbox match declaration is invalid.",
+      400,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpRequestError(
+      "outbox_match_invalid",
+      "The outbox match declaration is invalid.",
+      400,
+    );
+  }
+  const input = parsed as Record<string, unknown>;
+  if (
+    !hasExactKeys(input, ["artifactId"]) ||
+    typeof input.artifactId !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(input.artifactId)
+  ) {
+    throw new HttpRequestError(
+      "outbox_match_invalid",
+      "The outbox match declaration is invalid.",
+      400,
+    );
+  }
+  return input.artifactId;
+}
+
 function mapRequestError(error: unknown, pathname: string): Response {
   if (error instanceof HttpRequestError) {
     return errorResponse(error.code, error.message, error.status);
@@ -1734,6 +1846,14 @@ export default {
     if (url.pathname === "/api/v0/artifacts") {
       try {
         return await handlePublishApi(request, env);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname.startsWith("/api/v0/outbox")) {
+      try {
+        return await handleOutboxApi(request, env, url.pathname);
       } catch (error) {
         return mapRequestError(error, url.pathname);
       }

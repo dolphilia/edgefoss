@@ -207,6 +207,87 @@ describe("EdgeFossil Worker", () => {
     });
   });
 
+  it("protects the bounded outbox observation route with owner authentication", async () => {
+    const unauthenticatedContext = createExecutionContext();
+    const unauthenticated = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1"),
+      env,
+      unauthenticatedContext,
+    );
+    await waitOnExecutionContext(unauthenticatedContext);
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("cache-control")).toBe("no-store");
+
+    const unauthenticatedMatchContext = createExecutionContext();
+    const unauthenticatedMatch = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1/match", {
+        body: "not json",
+        method: "POST",
+      }),
+      env,
+      unauthenticatedMatchContext,
+    );
+    await waitOnExecutionContext(unauthenticatedMatchContext);
+    expect(unauthenticatedMatch.status).toBe(401);
+
+    const authorizedContext = createExecutionContext();
+    const authorized = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1", {
+        headers: authorizedHeaders(),
+      }),
+      env,
+      authorizedContext,
+    );
+    await waitOnExecutionContext(authorizedContext);
+    expect(authorized.status).toBe(200);
+    await expect(authorized.json()).resolves.toEqual({
+      outbox: {
+        event: null,
+        totals: { delivered: 0, enqueued: 0, pending: 0 },
+      },
+    });
+
+    const matchContext = createExecutionContext();
+    const matchResponse = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1/match", {
+        body: JSON.stringify({ artifactId: `sha256:${"0".repeat(64)}` }),
+        headers: authorizedHeaders({ "content-type": "application/json" }),
+        method: "POST",
+      }),
+      env,
+      matchContext,
+    );
+    await waitOnExecutionContext(matchContext);
+    expect(matchResponse.status).toBe(200);
+    await expect(matchResponse.json()).resolves.toEqual({
+      match: { exists: false, matches: false, repoSequence: 1 },
+    });
+
+    const methodContext = createExecutionContext();
+    const wrongMethod = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1", {
+        headers: authorizedHeaders(),
+        method: "POST",
+      }),
+      env,
+      methodContext,
+    );
+    await waitOnExecutionContext(methodContext);
+    expect(wrongMethod.status).toBe(405);
+    expect(wrongMethod.headers.get("allow")).toBe("GET");
+
+    const invalidContext = createExecutionContext();
+    const invalid = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/0", {
+        headers: authorizedHeaders(),
+      }),
+      env,
+      invalidContext,
+    );
+    await waitOnExecutionContext(invalidContext);
+    expect(invalid.status).toBe(404);
+  });
+
   it("publishes a signed genesis, tree, and change through the owner API", async () => {
     const pair = await crypto.subtle.generateKey("Ed25519", true, [
       "sign",
@@ -234,6 +315,50 @@ describe("EdgeFossil Worker", () => {
       publication: { artifactId: string; repoSequence: number };
     }>();
     expect(genesis.publication.repoSequence).toBe(1);
+
+    const observationContext = createExecutionContext();
+    const observationResponse = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1", {
+        headers: authorizedHeaders(),
+      }),
+      env,
+      observationContext,
+    );
+    await waitOnExecutionContext(observationContext);
+    expect(observationResponse.status).toBe(200);
+    const observationText = await observationResponse.text();
+    expect(JSON.parse(observationText)).toEqual({
+      outbox: {
+        event: {
+          deliveredAt: null,
+          enqueuedAt: null,
+          lastSendAttemptAt: null,
+          phase: "pending",
+          repoSequence: 1,
+          sendAttempts: 0,
+        },
+        totals: { delivered: 0, enqueued: 0, pending: 1 },
+      },
+    });
+    expect(observationText).not.toContain(genesis.publication.artifactId);
+    expect(observationText).not.toContain(OWNER_TOKEN);
+
+    const matchContext = createExecutionContext();
+    const matchResponse = await worker.fetch(
+      new IncomingRequest("https://edgefoss.test/api/v0/outbox/1/match", {
+        body: JSON.stringify({ artifactId: genesis.publication.artifactId }),
+        headers: authorizedHeaders({ "content-type": "application/json" }),
+        method: "POST",
+      }),
+      env,
+      matchContext,
+    );
+    await waitOnExecutionContext(matchContext);
+    const matchText = await matchResponse.text();
+    expect(JSON.parse(matchText)).toEqual({
+      match: { exists: true, matches: true, repoSequence: 1 },
+    });
+    expect(matchText).not.toContain(genesis.publication.artifactId);
 
     const blobBytes = new TextEncoder().encode("HTTP adapter blob");
     const repository = env.REPOSITORY.getByName("edgefoss-single-project-v0", {

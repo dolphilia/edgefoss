@@ -105,6 +105,23 @@ describe("RepositoryDO transactional authority outbox", () => {
       enqueued: 0,
       pending: 1,
     });
+    await expect(repository.outboxObservation(1)).resolves.toEqual({
+      event: {
+        deliveredAt: null,
+        enqueuedAt: null,
+        lastSendAttemptAt: null,
+        phase: "pending",
+        repoSequence: 1,
+        sendAttempts: 0,
+      },
+      totals: { delivered: 0, enqueued: 0, pending: 1 },
+    });
+    await expect(
+      repository.outboxArtifactMatch(1, input.artifactId),
+    ).resolves.toEqual({ exists: true, matches: true, repoSequence: 1 });
+    await expect(
+      repository.outboxArtifactMatch(2, input.artifactId),
+    ).resolves.toEqual({ exists: false, matches: false, repoSequence: 2 });
 
     const failingQueue = new FakeQueue(true);
     await expect(
@@ -121,6 +138,13 @@ describe("RepositoryDO transactional authority outbox", () => {
           .one(),
       ).toEqual({ attempts: 1, state: "pending" });
     });
+    await expect(repository.outboxObservation(1)).resolves.toMatchObject({
+      event: {
+        lastSendAttemptAt: 1_000,
+        phase: "pending",
+        sendAttempts: 1,
+      },
+    });
 
     const queue = new FakeQueue(false);
     await expect(
@@ -133,6 +157,16 @@ describe("RepositoryDO transactional authority outbox", () => {
       delivered: 0,
       enqueued: 1,
       pending: 0,
+    });
+    await expect(repository.outboxObservation(1)).resolves.toMatchObject({
+      event: {
+        deliveredAt: null,
+        enqueuedAt: 2_000,
+        lastSendAttemptAt: 2_000,
+        phase: "enqueued",
+        repoSequence: 1,
+        sendAttempts: 2,
+      },
     });
     await runInDurableObject(repository, (_instance, state) => {
       expect(
@@ -213,6 +247,18 @@ describe("RepositoryDO transactional authority outbox", () => {
     });
     await expect(repository.outboxStatus()).resolves.toMatchObject({
       delivered: 1,
+    });
+    await expect(repository.outboxObservation(1)).resolves.toMatchObject({
+      event: {
+        phase: "delivered",
+        repoSequence: 1,
+        sendAttempts: 1,
+      },
+      totals: { delivered: 1, enqueued: 1, pending: 0 },
+    });
+    await expect(repository.outboxObservation(2)).resolves.toEqual({
+      event: null,
+      totals: { delivered: 1, enqueued: 1, pending: 0 },
     });
 
     const unknownEvent = {

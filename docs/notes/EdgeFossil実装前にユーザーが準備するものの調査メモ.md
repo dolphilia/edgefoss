@@ -813,6 +813,24 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] このmigration gateではartifact publishと既存smokeを実行しない。
 - [x] named stagingのQueue producer/consumerが未追加であることを確認する。
 
+### P4d observation adapter deploy直前に行う
+
+- [ ] observation/smokeのlocal実装commit後に通常CI成功を確認する。
+- [ ] manual staging deployでschema 5 healthを確認する。
+- [ ] 非認証 `GET /api/v0/outbox/4` がHTTP 401、`Cache-Control: no-store`、
+      `WWW-Authenticate` ありであることを確認する。
+- [ ] named stagingのQueue producer/consumerがまだ未追加であることを確認する。
+- [ ] このgateで `cloud:smoke-queue`、artifact publish、R2 writeを実行しない。
+
+### P4d最初のQueue有効化直前に行う
+
+- [ ] staging producer/consumer、batch/retry、DLQの正確なconfig差分をreviewする。
+- [ ] commit/通常CIとnamed staging dry-runを通す。
+- [ ] public tree、receipt、operation、outbox、deliveryをsequence 4として恒久追加する
+      smoke効果をaccount ownerが明示承認する。
+- [ ] 案内後に `cloud:smoke-queue` を一度実行し、tokenをunsetする。
+- [ ] `delivered` のみをsuccessとし、`enqueued` 滞留をDLQ完了と解釈しない。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。
@@ -864,7 +882,8 @@ repositoryへ保存してはいけないもの:
 staging resources、CI deploy token、staging owner secret、schema 5 migrationまでは完了した。
 publish adapterのdeploy、synthetic remote publish、Queueを結線しないtransactional outboxの
 remote migrationも完了した。次のdelivery observation/smokeのlocal実装中に新しく
-準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへproducer/consumerを
+準備するCloudflare resourceやcredentialはない。observation adapterは先にQueueなしでdeployし、
+非認証401を確認する。既にprovision済みのQueue/DLQへproducer/consumerを
 追加する段階では、observation contract、failure injection、dry-run、commit/通常CIを先に通し、
 remote有効化前に改めて効果を案内する。production secret、R2 S3 credential、custom domainは
 まだ作らない。
