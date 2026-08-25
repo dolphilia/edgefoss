@@ -185,7 +185,7 @@ function validTransferInput(input: PublicArtifactTransferInput): boolean {
     !Array.isArray(input.artifactIds) ||
     input.artifactIds.length === 0 ||
     input.artifactIds.length > MAX_PUBLIC_TRANSFER_ITEMS ||
-    !validSnapshot(input.snapshot)
+    !validPublicTransferSnapshot(input.snapshot)
   ) {
     return false;
   }
@@ -197,7 +197,9 @@ function validTransferInput(input: PublicArtifactTransferInput): boolean {
   return true;
 }
 
-function validSnapshot(snapshot: PublicInventoryAnchorV0): boolean {
+export function validPublicTransferSnapshot(
+  snapshot: PublicInventoryAnchorV0,
+): boolean {
   return (
     snapshot !== null &&
     typeof snapshot === "object" &&

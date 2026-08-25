@@ -34,6 +34,13 @@ import {
   type SyncHelloResult,
 } from "./sync-inventory.js";
 import {
+  planPublicClone,
+  readPublicBlobChunk,
+  type PublicBlobChunkInput,
+  type PublicBlobChunkResult,
+  type PublicClonePlanResult,
+} from "./sync-clone.js";
+import {
   beginPublicTransfer,
   readPublicArtifactTransfer,
   type BeginPublicTransferInput,
@@ -62,6 +69,19 @@ export type {
   SyncHelloInput,
   SyncHelloResult,
 } from "./sync-inventory.js";
+export type {
+  PublicBlobChunkInput,
+  PublicBlobChunkResult,
+  PublicCloneBlobV0,
+  PublicClonePlanResult,
+  PublicClonePlanV0,
+} from "./sync-clone.js";
+export {
+  MAX_PUBLIC_BLOB_CHUNK_BYTES,
+  MAX_PUBLIC_CLONE_ARTIFACT_BYTES,
+  MAX_PUBLIC_CLONE_ARTIFACTS,
+  MAX_PUBLIC_CLONE_BLOBS,
+} from "./sync-clone.js";
 export type {
   BeginPublicTransferInput,
   BeginPublicTransferResult,
@@ -738,6 +758,22 @@ export class RepositoryDO extends DurableObject<Env> {
     input: PublicArtifactTransferInput,
   ): Promise<PublicArtifactTransferResult> {
     return readPublicArtifactTransfer(this.ctx.storage.sql, input);
+  }
+
+  async publicClonePlan(
+    input: BeginPublicTransferInput,
+  ): Promise<PublicClonePlanResult> {
+    return planPublicClone(this.ctx.storage.sql, input);
+  }
+
+  async publicBlobChunk(
+    input: PublicBlobChunkInput,
+  ): Promise<PublicBlobChunkResult> {
+    return readPublicBlobChunk(
+      this.ctx.storage.sql,
+      this.env.PUBLIC_BLOBS,
+      input,
+    );
   }
 
   #commitPublishedArtifact(
