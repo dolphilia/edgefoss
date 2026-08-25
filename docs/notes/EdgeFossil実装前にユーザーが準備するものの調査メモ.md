@@ -825,9 +825,10 @@ Paidへ移る判断はP4/P5の実測後に行う。
 ### P4d最初のQueue有効化直前に行う
 
 - [x] staging producer/consumer、batch/retry、DLQの正確なconfig差分をreviewする。
-- [ ] commit/通常CIとnamed staging dry-runを通す。
-- [ ] Queue設定commit後のmanual deployとschema 5 healthを通し、artifact、outbox、
+- [x] commit/通常CIとnamed staging dry-runを通す。
+- [x] Queue設定commit後のmanual deployとschema 5 healthを通し、artifact、outbox、
       Queue message、R2 objectが増えていないことを確認する。
+- [ ] binding-only remote証跡のcommit後に通常CI成功を確認する。
 - [ ] public tree、receipt、operation、outbox、deliveryをsequence 4として恒久追加する
       smoke効果をaccount ownerが明示承認する。
 - [ ] 案内後に `cloud:smoke-queue` を一度実行し、tokenをunsetする。
@@ -886,8 +887,9 @@ publish adapterのdeploy、synthetic remote publish、Queueを結線しないtra
 remote migration、observation adapterのQueueなしdeployと非認証401も完了した。新しく
 準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへstagingの
 producer/consumerを追加するconfigはmanifestどおりlocal実装し、productionは未結線にした。
-commit/通常CI後にまずbindingだけをdeployして無変更を確認し、sequence 4の恒久追加効果は
-その後に改めて承認してもらう。production secret、R2 S3 credential、custom domainはまだ作らない。
+commit/通常CI後、bindingだけをstagingへdeployし、schema 5、sequence 4なし、outbox total 0を
+確認した。次はこの証跡をcommitして通常CIを通してから、sequence 4の恒久追加効果を改めて
+承認してもらう。production secret、R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 
