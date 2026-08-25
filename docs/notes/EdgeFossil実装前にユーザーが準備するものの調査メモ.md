@@ -828,11 +828,19 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] commit/通常CIとnamed staging dry-runを通す。
 - [x] Queue設定commit後のmanual deployとschema 5 healthを通し、artifact、outbox、
       Queue message、R2 objectが増えていないことを確認する。
-- [ ] binding-only remote証跡のcommit後に通常CI成功を確認する。
-- [ ] public tree、receipt、operation、outbox、deliveryをsequence 4として恒久追加する
+- [x] binding-only remote証跡のcommit後に通常CI成功を確認する。
+- [x] public tree、receipt、operation、outbox、deliveryをsequence 4として恒久追加する
       smoke効果をaccount ownerが明示承認する。
-- [ ] 案内後に `cloud:smoke-queue` を一度実行し、tokenをunsetする。
-- [ ] `delivered` のみをsuccessとし、`enqueued` 滞留をDLQ完了と解釈しない。
+- [x] 案内後に `cloud:smoke-queue` を一度実行し、tokenをunsetする。
+- [x] `delivered` のみをsuccessとし、`enqueued` 滞留をDLQ完了と解釈しない。
+
+### P4d failure matrix直前に行う
+
+- [ ] success-path smoke証跡のcommit後に通常CI成功を確認する。
+- [ ] canonical artifactを増やさないlocal-only failure harnessを先に実装する。
+- [ ] remote failure injectionが必要か、local testで不足する観測項目をreviewする。
+- [ ] DLQ transferを直接確認できない限り、`enqueued`滞留やretry回数だけでDLQ成功としない。
+- [ ] remote Queue停止、consumer削除、poison message送信は別の効果承認前に行わない。
 
 ### 必要になった時だけ行う
 
@@ -888,8 +896,10 @@ remote migration、observation adapterのQueueなしdeployと非認証401も完�
 準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへstagingの
 producer/consumerを追加するconfigはmanifestどおりlocal実装し、productionは未結線にした。
 commit/通常CI後、bindingだけをstagingへdeployし、schema 5、sequence 4なし、outbox total 0を
-確認した。次はこの証跡をcommitして通常CIを通してから、sequence 4の恒久追加効果を改めて
-承認してもらう。production secret、R2 S3 credential、custom domainはまだ作らない。
+確認した。その証跡のcommit/通常CI後、account ownerがsequence 4の恒久追加効果を承認し、
+Queue smokeは1 send attemptで`delivered`へ収束した。ref、R2、members、productionは変更していない。
+次のfailure matrixはlocal-only harnessから始め、remote Queue停止やpoison messageは別途必要性と
+効果をreviewする。production secret、R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 

@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 16（P4d staging Queue binding remote gateを反映）
+改訂: Revision 17（P4d sequence 4 Queue success-path smokeを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -640,8 +640,9 @@ remote Queue有効化の前に、owner-only delivery observationとdeterministic
 smokeをlocal実装した。observation adapterのQueueなしdeploy、schema 5 health、非認証401も
 成功した。次はmanifestと一致するstaging producer/consumerをlocal設定し、productionを
 未結線のままnamed dry-runと通常CIを通した。続くbinding-only remote deployもschema 5と
-空outboxを維持して成功した。次はこの証跡のcommit/通常CI後、sequence 4 smokeの恒久効果を
-account ownerが明示承認するgateであり、まだsmokeは実行しない。
+空outboxを維持して成功した。その証跡のcommit/通常CI後、account ownerがsequence 4 smokeの
+恒久効果を明示承認し、remote smokeはsequence 4を`delivered`へ収束させた。次は
+canonical writeを増やさないbounded failure injectionとDLQ観測契約をlocal設計する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -834,8 +835,15 @@ sequence 4 smokeはまだ許可しない。そのcommit/通常CI後、`main`限�
 producer/consumerをdeployした。healthはschema 5でgreen、認証済みsequence 4 observationは
 `event: null`、totalはpending/enqueued/deliveredすべて0であった。つまりbinding登録だけでは
 artifact、outbox row、Queue message、R2 objectは増えていない。productionも未結線である。
-次gateはこのremote証跡のcommit/通常CIと、account ownerによるsequence 4恒久効果の明示承認である。
-詳細は
+その時点の次gateはremote証跡のcommit/通常CIと、account ownerによるsequence 4恒久効果の
+明示承認であった。
+そのgate後、account ownerはpublic tree、receipt、operation、outbox、deliveryの恒久追加を
+明示承認した。exact-origin smokeは同じpublishを2回送り一つのsequence 4へ収束し、alarmは
+1回のsend attemptでQueueへenqueue、consumerはstored event identityを検証して`delivered`を
+記録した。ref、R2、members、productionは変更していない。これでP4dのremote success pathは
+完了したが、Queue outage recoveryとDLQ transferを観測するfailure matrixは未完了である。
+次はcanonical artifactを増やさず、localでproducer failure、consumer retry、duplicate、
+out-of-order、DLQ判定を分離するbounded harnessを設計・実装する。詳細は
 [`ADR 0032`](../adr/0032-transactional-authority-outbox-and-bounded-alarm-drain.md)と
 [`ADR 0033`](../adr/0033-owner-only-outbox-observation-and-single-event-smoke.md)、
 [`ADR 0034`](../adr/0034-staging-first-queue-activation.md)、
@@ -844,7 +852,8 @@ artifact、outbox row、Queue message、R2 objectは増えていない。product
 [`P4d observation local evidence`](../evidence/p4d-outbox-observation-local-2026-08-25.md)、
 [`P4d observation remote evidence`](../evidence/p4d-outbox-observation-remote-deploy-2026-08-25.md)、
 [`P4d Queue activation local evidence`](../evidence/p4d-staging-queue-activation-local-2026-08-25.md)、
-[`P4d Queue binding remote evidence`](../evidence/p4d-staging-queue-binding-remote-2026-08-25.md)を参照する。
+[`P4d Queue binding remote evidence`](../evidence/p4d-staging-queue-binding-remote-2026-08-25.md)、
+[`P4d Queue success-path remote evidence`](../evidence/p4d-sequence4-queue-smoke-remote-2026-08-25.md)を参照する。
 
 成果物:
 
