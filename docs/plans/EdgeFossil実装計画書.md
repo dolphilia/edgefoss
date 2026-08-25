@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 14（P4d owner-only outbox observation local実装を反映）
+改訂: Revision 15（P4d staging-first Queue activation local実装を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -637,7 +637,9 @@ P4dの最初のincrementとしてschema 5 transactional outbox、bounded DO alar
 idempotent Queue consumer coreをlocal実装し、full local gateと通常CIを通過した。Queue bindingを
 追加せずschema 4から5へのmigration-only staging deployとstateful healthも成功した。
 remote Queue有効化の前に、owner-only delivery observationとdeterministic sequence 4
-smokeをlocal実装した。次はこのadapterをQueueなしでdeployし、healthと非認証401だけを確認する。
+smokeをlocal実装した。observation adapterのQueueなしdeploy、schema 5 health、非認証401も
+成功した。次はmanifestと一致するstaging producer/consumerをlocal設定し、productionを
+未結線のままnamed dry-runと通常CIを通す。remote deployとsequence 4 smokeは別gateとする。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -821,13 +823,20 @@ pending/enqueued/delivered、send attempt、timestampだけをownerへ返し、e
 HTTPへ出さない。smokeは既存actor/blobでpublic treeをsequence 4として一つだけ登録し、
 exact operation retry後にdeliveredまでpollするが、remoteでは未実行である。enqueuedの長期滞留だけから
 consumer retryとDLQ移送は区別できないため、smokeは失敗させ、DLQ failure injection完了とは
-判定しない。次gateはcommit/通常CI後、Queueを結線せずobservation adapterのみを
-schema 5 stagingへdeployし、healthと非認証401を確認することである。詳細は
+判定しない。observation adapterはQueueを結線せずschema 5 stagingへdeployし、healthと
+非認証401に成功した。続くlocal incrementでは、既にreview/provision済みのstaging Queueへ
+`EVENTS` producerと同Worker consumerを同時に宣言し、batch 10、timeout 5秒、retry 3、
+専用DLQをmanifestどおり固定した。productionのproducer/consumerは空のままである。
+generated typesとnamed staging/production dry-runを通してから通常CIへ進めるが、remote deployと
+sequence 4 smokeはまだ許可しない。詳細は
 [`ADR 0032`](../adr/0032-transactional-authority-outbox-and-bounded-alarm-drain.md)と
 [`ADR 0033`](../adr/0033-owner-only-outbox-observation-and-single-event-smoke.md)、
+[`ADR 0034`](../adr/0034-staging-first-queue-activation.md)、
 [`P4d local evidence`](../evidence/p4d-transactional-outbox-local-2026-08-25.md)、
 [`P4d schema 5 remote evidence`](../evidence/p4d-schema5-migration-remote-2026-08-25.md)、
-[`P4d observation local evidence`](../evidence/p4d-outbox-observation-local-2026-08-25.md)を参照する。
+[`P4d observation local evidence`](../evidence/p4d-outbox-observation-local-2026-08-25.md)、
+[`P4d observation remote evidence`](../evidence/p4d-outbox-observation-remote-deploy-2026-08-25.md)、
+[`P4d Queue activation local evidence`](../evidence/p4d-staging-queue-activation-local-2026-08-25.md)を参照する。
 
 成果物:
 

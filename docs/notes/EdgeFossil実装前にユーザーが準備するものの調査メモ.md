@@ -815,17 +815,19 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 ### P4d observation adapter deploy直前に行う
 
-- [ ] observation/smokeのlocal実装commit後に通常CI成功を確認する。
-- [ ] manual staging deployでschema 5 healthを確認する。
-- [ ] 非認証 `GET /api/v0/outbox/4` がHTTP 401、`Cache-Control: no-store`、
+- [x] observation/smokeのlocal実装commit後に通常CI成功を確認する。
+- [x] manual staging deployでschema 5 healthを確認する。
+- [x] 非認証 `GET /api/v0/outbox/4` がHTTP 401、`Cache-Control: no-store`、
       `WWW-Authenticate` ありであることを確認する。
-- [ ] named stagingのQueue producer/consumerがまだ未追加であることを確認する。
-- [ ] このgateで `cloud:smoke-queue`、artifact publish、R2 writeを実行しない。
+- [x] named stagingのQueue producer/consumerがまだ未追加であることを確認する。
+- [x] このgateで `cloud:smoke-queue`、artifact publish、R2 writeを実行しない。
 
 ### P4d最初のQueue有効化直前に行う
 
-- [ ] staging producer/consumer、batch/retry、DLQの正確なconfig差分をreviewする。
+- [x] staging producer/consumer、batch/retry、DLQの正確なconfig差分をreviewする。
 - [ ] commit/通常CIとnamed staging dry-runを通す。
+- [ ] Queue設定commit後のmanual deployとschema 5 healthを通し、artifact、outbox、
+      Queue message、R2 objectが増えていないことを確認する。
 - [ ] public tree、receipt、operation、outbox、deliveryをsequence 4として恒久追加する
       smoke効果をaccount ownerが明示承認する。
 - [ ] 案内後に `cloud:smoke-queue` を一度実行し、tokenをunsetする。
@@ -881,12 +883,11 @@ repositoryへ保存してはいけないもの:
 2026-08-25時点でNode.js 24、account安全確認、Wrangler OAuth、workers.dev、R2、
 staging resources、CI deploy token、staging owner secret、schema 5 migrationまでは完了した。
 publish adapterのdeploy、synthetic remote publish、Queueを結線しないtransactional outboxの
-remote migrationも完了した。次のdelivery observation/smokeのlocal実装中に新しく
-準備するCloudflare resourceやcredentialはない。observation adapterは先にQueueなしでdeployし、
-非認証401を確認する。既にprovision済みのQueue/DLQへproducer/consumerを
-追加する段階では、observation contract、failure injection、dry-run、commit/通常CIを先に通し、
-remote有効化前に改めて効果を案内する。production secret、R2 S3 credential、custom domainは
-まだ作らない。
+remote migration、observation adapterのQueueなしdeployと非認証401も完了した。新しく
+準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへstagingの
+producer/consumerを追加するconfigはmanifestどおりlocal実装し、productionは未結線にした。
+commit/通常CI後にまずbindingだけをdeployして無変更を確認し、sequence 4の恒久追加効果は
+その後に改めて承認してもらう。production secret、R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 
