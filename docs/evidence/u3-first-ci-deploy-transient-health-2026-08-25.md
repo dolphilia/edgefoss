@@ -5,7 +5,7 @@
 - Deployment step: pass
 - Immediate post-deploy audit: `GET /health` returned HTTP 500
 - Later independent audit: pass
-- U3 state: remediation pending commit, CI, and another manual workflow run
+- U3 state: complete
 
 ## Observation
 
@@ -37,8 +37,9 @@ therefore remains fatal after a maximum additional wait of 25 seconds.
 No Cloudflare permission, token scope, Durable Object namespace, R2 resource,
 production setting, or Queue consumer is changed by this remediation.
 
-## Next verification
+## Completion
 
-After this remediation is committed, pushed, and the normal GitHub Actions
-checks pass, manually run `Deploy staging Worker` from `main` again. U3 becomes
-complete only when the deployment and bounded stateful health audit both pass.
+The remediation was committed to `main`, normal GitHub Actions passed, and the
+account owner manually ran `Deploy staging Worker` from `main` again. Both the
+deployment and bounded stateful health audit passed. U3 is complete without any
+additional token permission or Cloudflare resource.

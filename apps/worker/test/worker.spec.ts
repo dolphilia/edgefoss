@@ -26,7 +26,7 @@ describe("EdgeFossil Worker", () => {
     expect(body).toEqual({
       components: {
         repository: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           status: "ok",
           storage: "sqlite",
         },
@@ -50,12 +50,12 @@ describe("EdgeFossil Worker", () => {
     });
 
     await expect(repository.health()).resolves.toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: "ok",
       storage: "sqlite",
     });
     await expect(repository.health()).resolves.toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: "ok",
       storage: "sqlite",
     });

@@ -8,7 +8,7 @@ import {
 
 const expectedBody = {
   components: {
-    repository: { schemaVersion: 1, status: "ok", storage: "sqlite" },
+    repository: { schemaVersion: 2, status: "ok", storage: "sqlite" },
     r2: {
       exports: "bound",
       publicBlobs: "bound",
@@ -66,7 +66,7 @@ test("audits the exact GET and HEAD stateful health contract", async () => {
       new URL("https://edgefoss.example"),
       fetchImplementation,
     ),
-    { edition: "single", environment: "staging", schemaVersion: 1 },
+    { edition: "single", environment: "staging", schemaVersion: 2 },
   );
   assert.deepEqual(methods, ["GET", "HEAD"]);
 });
@@ -118,7 +118,7 @@ test("retries a transient post-deploy failure before accepting the exact contrac
         sleep: async (milliseconds) => delays.push(milliseconds),
       },
     ),
-    { edition: "single", environment: "staging", schemaVersion: 1 },
+    { edition: "single", environment: "staging", schemaVersion: 2 },
   );
   assert.deepEqual(delays, [25]);
   assert.deepEqual(reports, [

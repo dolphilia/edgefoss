@@ -1,6 +1,6 @@
 # ADR-0027: Gate staging CI deployment behind manual main-only execution
 
-- Status: Accepted for U3 readiness
+- Status: Accepted
 - Date: 2026-08-25
 - Owners: cloud lead, account owner
 - Decision deadline: complete

@@ -621,7 +621,7 @@ Exit gate G3:
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
 
-現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0のresource manifest、approval-gated provision/verify、U2承認、staging resource作成も完了した。P4a Worker実装はcommit `85eb3e0`とGitHub Actions成功後にmanual OAuth deployされ、SQLite `RepositoryDO`、3 R2 bindings、GET/HEAD stateful healthがremoteでgreenになった。Queue/DLQにconsumerがないこともread-only確認したためP4aは完了である。次はU3に必要な最小CI deploy workflowをlocal実装・検証してからaccount ownerへtoken設定を促し、並行してP4b small-blob state machineのlocal設計へ進む。
+現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0とP4a、U2、U3は完了した。account限定tokenによるmanual main-only staging deployとbounded stateful healthがgreenである。次はP4b small-blob state machineを、認証前にはpublic write routeを開かないinternal RPCから実装する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -704,6 +704,17 @@ exact contractで成功したため、permissionやDO lifecycleを変更せず�
 引き続き失敗する。この改善のcommit/通常CI成功後、`main`からmanual deployを再実行し、
 deployとhealthがともにgreenになって初めてU3完了とする。詳細は
 [`U3 first CI deploy transient health evidence`](../evidence/u3-first-ci-deploy-transient-health-2026-08-25.md)を参照する。
+
+U3完了（2026-08-25）: bounded retry改善をcommitした`main`からworkflowを再実行し、
+staging deployとstateful healthがともに成功した。token permission、Cloudflare resource、
+production設定は追加していない。
+
+P4b実行状況（2026-08-25）: 認証前のpublic mutationを避け、schema 2へmigrationする
+`upload_sessions`/`blobs`、typed internal RPC、16 MiB上限、realm別R2、ETag固定read、
+application SHA-256検証、conditional final write、transactional acceptance、operation/finalize
+再送をlocal実装した。HTTP write routeとremote upload smokeはまだ追加しない。詳細は
+[`ADR 0028`](../adr/0028-internal-small-blob-finalization-core.md)と
+[`P4b local evidence`](../evidence/p4b-small-blob-core-local-2026-08-25.md)を参照する。
 
 成果物:
 

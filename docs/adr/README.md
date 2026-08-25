@@ -30,6 +30,7 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0024](0024-reviewed-cloud-resource-manifest.md)           | Review cloud resources before provisioning          | Accepted for P4a0                |
 | [0025](0025-u2-gated-cloud-provisioning.md)                | Gate idempotent provisioning on exact U2 approval   | Accepted for P4a0                |
 | [0026](0026-minimal-single-project-stateful-topology.md)   | Start with one fixed SQLite Durable Object          | Accepted for P4a                 |
-| [0027](0027-manual-main-only-staging-ci-deploy.md)         | Gate staging CI deploy behind manual main execution | Accepted for U3 readiness        |
+| [0027](0027-manual-main-only-staging-ci-deploy.md)         | Gate staging CI deploy behind manual main execution | Accepted                         |
+| [0028](0028-internal-small-blob-finalization-core.md)      | Build upload core before exposing writes            | Accepted for P4b                 |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.
