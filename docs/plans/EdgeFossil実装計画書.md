@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 17（P4d sequence 4 Queue success-path smokeを反映）
+改訂: Revision 18（P4d bounded local Queue failure matrixを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -643,6 +643,10 @@ smokeをlocal実装した。observation adapterのQueueなしdeploy、schema 5 h
 空outboxを維持して成功した。その証跡のcommit/通常CI後、account ownerがsequence 4 smokeの
 恒久効果を明示承認し、remote smokeはsequence 4を`delivered`へ収束させた。次は
 canonical writeを増やさないbounded failure injectionとDLQ観測契約をlocal設計する。
+applicationとCloudflare管理DLQの責任境界を分け、Queue response loss、delivery-before-enqueued、
+duplicate、out-of-order、mixed valid/invalid batch、attempt 1–4 retry、log redactionをWorkers runtimeで
+注入するlocal harnessを実装した。full local gateとnamed dry-runはgreenであり、次はcommitと
+通常CIである。remote poison messageは使わない。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -843,7 +847,12 @@ artifact、outbox row、Queue message、R2 objectは増えていない。product
 記録した。ref、R2、members、productionは変更していない。これでP4dのremote success pathは
 完了したが、Queue outage recoveryとDLQ transferを観測するfailure matrixは未完了である。
 次はcanonical artifactを増やさず、localでproducer failure、consumer retry、duplicate、
-out-of-order、DLQ判定を分離するbounded harnessを設計・実装する。詳細は
+out-of-order、DLQ判定を分離するbounded harnessを設計・実装した。Queue bodyは`unknown`から
+exact validateし、response loss後にpendingのままdeliveryされたeventも、後続alarm resendと
+duplicate ackを経てoutbox 1件・delivery 1件へ収束する。retry 3＋専用DLQはmanifest/configで固定し、
+handlerは4回目までexplicit retryを返す。実DLQ移送はCloudflare管理動作でありlocal evidenceでは
+観測済みと主張しない。remote Queue停止やpoison messageは不要と判断した。full local checkと
+named staging/production dry-runはgreenで、次gateはcommit/通常CIである。詳細は
 [`ADR 0032`](../adr/0032-transactional-authority-outbox-and-bounded-alarm-drain.md)と
 [`ADR 0033`](../adr/0033-owner-only-outbox-observation-and-single-event-smoke.md)、
 [`ADR 0034`](../adr/0034-staging-first-queue-activation.md)、
@@ -853,7 +862,9 @@ out-of-order、DLQ判定を分離するbounded harnessを設計・実装する�
 [`P4d observation remote evidence`](../evidence/p4d-outbox-observation-remote-deploy-2026-08-25.md)、
 [`P4d Queue activation local evidence`](../evidence/p4d-staging-queue-activation-local-2026-08-25.md)、
 [`P4d Queue binding remote evidence`](../evidence/p4d-staging-queue-binding-remote-2026-08-25.md)、
-[`P4d Queue success-path remote evidence`](../evidence/p4d-sequence4-queue-smoke-remote-2026-08-25.md)を参照する。
+[`P4d Queue success-path remote evidence`](../evidence/p4d-sequence4-queue-smoke-remote-2026-08-25.md)、
+[`ADR 0035`](../adr/0035-bounded-queue-failure-matrix.md)、
+[`P4d failure matrix local evidence`](../evidence/p4d-queue-failure-matrix-local-2026-08-25.md)を参照する。
 
 成果物:
 

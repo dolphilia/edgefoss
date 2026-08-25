@@ -836,11 +836,13 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 ### P4d failure matrix直前に行う
 
-- [ ] success-path smoke証跡のcommit後に通常CI成功を確認する。
-- [ ] canonical artifactを増やさないlocal-only failure harnessを先に実装する。
-- [ ] remote failure injectionが必要か、local testで不足する観測項目をreviewする。
-- [ ] DLQ transferを直接確認できない限り、`enqueued`滞留やretry回数だけでDLQ成功としない。
-- [ ] remote Queue停止、consumer削除、poison message送信は別の効果承認前に行わない。
+- [x] success-path smoke証跡のcommit後に通常CI成功を確認する。
+- [x] canonical artifactを増やさないlocal-only failure harnessを先に実装する。
+- [x] remote failure injectionが必要か、local testで不足する観測項目をreviewする。
+- [x] DLQ transferを直接確認できない限り、`enqueued`滞留やretry回数だけでDLQ成功としない。
+- [x] remote Queue停止、consumer削除、poison message送信は別の効果承認前に行わない。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] failure matrix実装をcommitし、通常CIを通す。
 
 ### 必要になった時だけ行う
 

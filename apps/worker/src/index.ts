@@ -15,12 +15,12 @@ import {
   readOutboxObservation,
   readOutboxStatus,
   recordAuthorityEventDelivery,
-  validateAuthorityEvent,
   type AuthorityEventV0,
   type OutboxArtifactMatch,
   type OutboxObservation,
   type OutboxStatus,
 } from "./outbox.js";
+import { consumeAuthorityEventMessage } from "./queue-consumer.js";
 
 export type {
   PublishArtifactInput,
@@ -1869,26 +1869,10 @@ export default {
       404,
     );
   },
-  async queue(batch: MessageBatch<AuthorityEventV0>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
     const repository = repositoryStub(env);
     for (const message of batch.messages) {
-      try {
-        validateAuthorityEvent(message.body);
-        const result = await repository.recordEventDelivery(message.body);
-        if (result.status === "unknown") {
-          throw new Error("authority_event_unknown");
-        }
-        message.ack();
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            error: error instanceof Error ? error.message : "unknown_error",
-            message: "authority event delivery failed",
-            queue: batch.queue,
-          }),
-        );
-        message.retry({ delaySeconds: 30 });
-      }
+      await consumeAuthorityEventMessage(message, repository, batch.queue);
     }
   },
-} satisfies ExportedHandler<Env, AuthorityEventV0>;
+} satisfies ExportedHandler<Env, unknown>;
