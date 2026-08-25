@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 8（P4c schema 4 remote migration gate完了を反映）
+改訂: Revision 9（P4c owner publish adapter local実装を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -626,9 +626,11 @@ Exit gate G3:
 U2、U3、U3aは完了した。P4bではowner認証済みHTTP adapterをschema 3へdeployし、
 固定30 byteのsynthetic public blobについてstaging、checksum検証、finalize、同一操作の
 再送収束をstagingで確認した。P4cではcanonical artifact acceptance、realm ref CAS、
-operation dedupeを一つにしたschema 4 internal transactionをlocal実装した。次はcommitと
-通常CI成功後、remote publishを行わずschema 3から4へのmigrationとhealthを確認し成功した。
-次はowner認証付きbounded publish adapterとreview済みstaging smokeをlocal実装する。
+operation dedupeを一つにしたschema 4 internal transactionをlocal実装し、remote publishを
+行わずschema 3から4へのmigrationとhealthを確認した。続いてowner認証付きbounded publish
+adapterとreview可能なdeterministic staging smokeをlocal実装した。次はこの変更のcommitと
+通常CI成功後、schema 4のままmanual staging deployし、remote write効果を再確認してから
+一度だけpublish smokeを実行する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -763,6 +765,20 @@ project identityとremote write効果をreviewしてからだけstaging smokeを
 [`ADR 0030`](../adr/0030-transactional-canonical-artifact-publication.md)と
 [`local evidence`](../evidence/p4c-canonical-publish-core-local-2026-08-25.md)、
 [`remote evidence`](../evidence/p4c-canonical-publish-core-remote-2026-08-25.md)を参照する。
+
+P4c owner publish adapter local実行状況（2026-08-25）: 既存owner Bearerをbody read前に
+検証する`POST /api/v0/artifacts`を追加した。exact JSON fields、2 MiB streamed body、
+canonical unpadded base64url、decoded artifact 1 MiB、signature record 1 KiBを境界で制限し、
+principalはserver側で`owner`へ固定する。acceptedはHTTP 200、operation/policy/ref conflictは
+typed bodyを保持して409、authority rejectionは422へ対応させる。staging smokeはshared
+protocolと公開synthetic Ed25519 fixtureでgenesis、既存P4b public blobを参照するtree、
+`heads/main` generation 1を作るchangeを生成し、各operationを2回送って完全一致を要求する。
+remote request、R2 write、schema変更、Queue consumer追加はlocal実装中に行っていない。
+次gateはcommit/通常CI成功後のmanual staging deployとschema 4 healthである。その後、
+account ownerが「staging projectの恒久初期化、3 artifacts/receipts/operations、public ref 1件、
+新規R2 writeなし」を確認した場合にだけsmokeを案内する。詳細は
+[`ADR 0031`](../adr/0031-owner-authenticated-canonical-publish-adapter.md)と
+[`local adapter evidence`](../evidence/p4c-canonical-publish-adapter-local-2026-08-25.md)を参照する。
 
 成果物:
 

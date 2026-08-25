@@ -598,6 +598,42 @@ upload/blob rowをRepositoryDOへ残すremote mutationである。自動削除�
 に理由なく繰り返さない。報告するのは`state`、`retryConverged`、
 `repositorySchemaVersion`だけでよく、tokenは報告しない。
 
+### 10.5 schema 4 publish adapter deploy後にsynthetic projectを一度だけ初期化する
+
+新しいCloudflare credentialやresourceは不要である。既にpassword managerへ保存した
+`EDGEFOSS_OWNER_TOKEN`だけを使う。次の全条件を満たすまで実行しない。
+
+- publish adapter変更をcommit/pushし、通常GitHub Actionsが成功した。
+- `main`からmanual staging deployが成功した。
+- stateful healthが`schemaVersion: 4`を返す。
+- 対象がexact staging originであり、productionではない。
+- 次の恒久的なstaging state変更をuserが確認した。
+
+実行すると、公開synthetic signing fixtureをowner actorとするproject genesis、既存30-byte
+public blobを参照するtree、changeを各1件acceptし、public `heads/main`をgeneration 1へ
+進める。receiptとoperation resultも各3件作る。同じ入力の再実行は保存済み結果へ収束する。
+新しいR2 object、members data、Queue consumerは作らない。Single Editionのproject identityは
+一つなので、productionや既存user repositoryでは絶対に実行しない。
+
+実行手順:
+
+```bash
+cd /Users/dolphilia/github/edgefoss
+read -r -s EDGEFOSS_OWNER_TOKEN
+export EDGEFOSS_OWNER_TOKEN
+pnpm run cloud:smoke-publish --origin https://edgefoss-staging.miga-and-raia.workers.dev
+unset EDGEFOSS_OWNER_TOKEN
+```
+
+注意:
+
+- URLにMarkdownの`[]()`を付けず、上記のraw URLをそのまま使う。
+- tokenはcommand argument、shell history、issue、log、完了報告へ書かない。
+- 成功時は`state: published`、`retryConverged: true`、
+  `repositorySchemaVersion: 4`、`repoSequence: 3`、`refGeneration: 1`、
+  `r2WritePerformed: false`を確認する。
+- 失敗時もtoken値は共有せず、HTTP statusとerror codeだけを報告する。
+
 ---
 
 ## 11. P7で必要になるR2 S3 credentials
@@ -763,6 +799,13 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] schema 3 deployとhealth成功前にはremote upload smokeを実行しない。
 - [x] 案内後にsynthetic staging smokeを一度実行し、tokenをunsetする。
 
+### P4c最初のremote publish直前に行う
+
+- [ ] publish adapterのcommit後に通常CI成功を確認する。
+- [ ] manual staging deployとschema 4 stateful health成功を確認する。
+- [ ] synthetic staging projectの恒久的な初期化効果を確認する。
+- [ ] 案内後にpublish smokeを一度実行し、tokenをunsetする。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。
@@ -811,9 +854,11 @@ repositoryへ保存してはいけないもの:
 ## 17. 最終提案
 
 2026-08-25時点でNode.js 24、account安全確認、Wrangler OAuth、workers.dev、R2、
-staging resources、CI deploy tokenまでは完了した。次に必要なのは、認証済みupload
-adapterのcommitと通常CI成功後にU3aとして行うEdgeFossil staging owner secret設定
-だけである。production secret、R2 S3 credential、custom domainはまだ作らない。
+staging resources、CI deploy token、staging owner secret、schema 4 migrationまでは完了した。
+次に新しく準備するCloudflare resourceやcredentialはない。publish adapterのcommit/通常CI、
+manual staging deploy、schema 4 healthの順に確認した後、既存owner tokenを一時的な環境変数
+として一度だけsynthetic publish smokeへ渡す。production secret、R2 S3 credential、
+custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 

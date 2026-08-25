@@ -16,12 +16,13 @@
     "docs:check": "node tools/check-doc-links.mjs",
     "cloud:plan": "node tools/cloud-plan.mjs",
     "cloud:provision": "node tools/cloud-state.mjs provision",
+    "cloud:smoke-publish": "tsx tools/smoke-worker-publish.mjs",
     "cloud:smoke-upload": "node tools/smoke-worker-upload.mjs",
     "cloud:verify": "node tools/cloud-state.mjs verify",
     "format": "prettier --write . && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all --check",
     "test": "pnpm test:ts && pnpm test:auth && pnpm test:cloud-plan && pnpm test:cloud-state && pnpm test:cloud-deploy && pnpm test:rust && pnpm test:static",
-    "test:auth": "node --test tools/generate-owner-token.test.mjs tools/smoke-worker-upload.test.mjs",
+    "test:auth": "node --test tools/generate-owner-token.test.mjs tools/smoke-worker-upload.test.mjs && tsx --test tools/smoke-worker-publish.test.mjs",
     "test:cloud-deploy": "node --test tools/audit-worker-health.test.mjs tools/deploy-workflow.test.mjs",
     "test:cloud-plan": "node --test tools/cloud-plan.test.mjs",
     "test:cloud-state": "node --test tools/cloud-state.test.mjs",
@@ -34,8 +35,10 @@
     "rust:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings"
   },
   "devDependencies": {
+    "@edgefoss/protocol": "workspace:*",
     "@types/node": "^26.2.0",
     "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "wrangler": "^4.125.0"
   }

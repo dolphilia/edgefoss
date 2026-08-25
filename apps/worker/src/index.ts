@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { FormatError } from "@edgefoss/protocol";
+import { FormatError, MAX_ARTIFACT_BYTES } from "@edgefoss/protocol";
 
 import {
   preparePublishArtifact,
@@ -24,6 +24,8 @@ const OWNER_PRINCIPAL = "owner";
 const REPOSITORY_SCHEMA_VERSION = 4;
 const MAX_SMALL_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
+const MAX_PUBLISH_JSON_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_SIGNATURE_BYTES = 1024;
 const OWNER_TOKEN_PATTERN = /^efoss_owner_v0_[A-Za-z0-9_-]{43}$/;
 
 export type CloudRealm = "public" | "members";
@@ -1279,6 +1281,167 @@ async function readUploadDeclaration(
   };
 }
 
+function hasExactKeys(
+  input: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.keys(input).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  );
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+}
+
+function decodeCanonicalBase64Url(
+  value: unknown,
+  maximumBytes: number,
+): ArrayBuffer | null {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > Math.ceil((maximumBytes * 4) / 3) ||
+    !/^[A-Za-z0-9_-]+$/u.test(value) ||
+    value.length % 4 === 1
+  ) {
+    return null;
+  }
+  try {
+    const padded = `${value.replaceAll("-", "+").replaceAll("_", "/")}${"=".repeat((4 - (value.length % 4)) % 4)}`;
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
+    );
+    if (bytes.byteLength > maximumBytes || encodeBase64Url(bytes) !== value) {
+      return null;
+    }
+    return bytes.buffer;
+  } catch {
+    return null;
+  }
+}
+
+async function readPublishDeclaration(
+  request: Request,
+): Promise<PublishArtifactInput> {
+  if (
+    request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
+  ) {
+    throw new HttpRequestError(
+      "content_type_invalid",
+      "Content-Type must be application/json.",
+      415,
+    );
+  }
+  const body = await readBoundedBody(request, MAX_PUBLISH_JSON_BODY_BYTES);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw new HttpRequestError(
+      "request_json_invalid",
+      "The request body must be valid JSON.",
+      400,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpRequestError(
+      "publish_declaration_invalid",
+      "The publish declaration is invalid.",
+      400,
+    );
+  }
+  const input = parsed as Record<string, unknown>;
+  if (
+    !hasExactKeys(input, [
+      "artifactBytes",
+      "artifactId",
+      "expectedPolicyEpoch",
+      "operationId",
+      "ref",
+      "signatureBytes",
+    ]) ||
+    typeof input.artifactId !== "string" ||
+    typeof input.operationId !== "string" ||
+    !Number.isSafeInteger(input.expectedPolicyEpoch) ||
+    (input.expectedPolicyEpoch as number) < 0
+  ) {
+    throw new HttpRequestError(
+      "publish_declaration_invalid",
+      "The publish declaration is invalid.",
+      400,
+    );
+  }
+  let ref: PublishArtifactInput["ref"] = null;
+  if (input.ref !== null) {
+    if (
+      typeof input.ref !== "object" ||
+      Array.isArray(input.ref) ||
+      !hasExactKeys(input.ref as Record<string, unknown>, [
+        "expectedGeneration",
+        "name",
+      ])
+    ) {
+      throw new HttpRequestError(
+        "publish_declaration_invalid",
+        "The publish declaration is invalid.",
+        400,
+      );
+    }
+    const candidate = input.ref as Record<string, unknown>;
+    if (
+      candidate.name !== "heads/main" ||
+      !Number.isSafeInteger(candidate.expectedGeneration) ||
+      (candidate.expectedGeneration as number) < 0
+    ) {
+      throw new HttpRequestError(
+        "publish_declaration_invalid",
+        "The publish declaration is invalid.",
+        400,
+      );
+    }
+    ref = {
+      expectedGeneration: candidate.expectedGeneration as number,
+      name: "heads/main",
+    };
+  }
+  const artifactBytes = decodeCanonicalBase64Url(
+    input.artifactBytes,
+    MAX_ARTIFACT_BYTES,
+  );
+  const signatureBytes = decodeCanonicalBase64Url(
+    input.signatureBytes,
+    MAX_SIGNATURE_BYTES,
+  );
+  if (artifactBytes === null || signatureBytes === null) {
+    throw new HttpRequestError(
+      "publish_declaration_invalid",
+      "The publish declaration is invalid.",
+      400,
+    );
+  }
+  return {
+    artifactBytes,
+    artifactId: input.artifactId,
+    expectedPolicyEpoch: input.expectedPolicyEpoch as number,
+    operationId: input.operationId,
+    principalId: OWNER_PRINCIPAL,
+    ref,
+    signatureBytes,
+  };
+}
+
 class HttpRequestError extends Error {
   constructor(
     readonly code: string,
@@ -1375,6 +1538,27 @@ async function handleUploadApi(
   });
 }
 
+async function handlePublishApi(request: Request, env: Env): Promise<Response> {
+  const authorizationFailure = await authorizeOwner(request, env);
+  if (authorizationFailure) return authorizationFailure;
+  if (request.method !== "POST") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "POST",
+    });
+  }
+
+  const result = await repositoryStub(env).publishArtifact(
+    await readPublishDeclaration(request),
+  );
+  const status =
+    result.status === "accepted"
+      ? 200
+      : result.status === "rejected"
+        ? 422
+        : 409;
+  return jsonResponse({ publication: result }, status);
+}
+
 function mapRequestError(error: unknown, pathname: string): Response {
   if (error instanceof HttpRequestError) {
     return errorResponse(error.code, error.message, error.status);
@@ -1443,6 +1627,14 @@ export default {
     if (url.pathname.startsWith("/api/v0/uploads")) {
       try {
         return await handleUploadApi(request, env, url.pathname);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname === "/api/v0/artifacts") {
+      try {
+        return await handlePublishApi(request, env);
       } catch (error) {
         return mapRequestError(error, url.pathname);
       }
