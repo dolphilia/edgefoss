@@ -579,9 +579,13 @@ shell historyへ残さず、そのprocess環境からreview済みsmokeへ渡す�
 ```bash
 read -r -s EDGEFOSS_OWNER_TOKEN
 export EDGEFOSS_OWNER_TOKEN
-pnpm run cloud:smoke-upload -- --origin https://edgefoss-staging.miga-and-raia.workers.dev
+pnpm run cloud:smoke-upload --origin https://edgefoss-staging.miga-and-raia.workers.dev
 unset EDGEFOSS_OWNER_TOKEN
 ```
+
+`pnpm run`と`--origin`の間に追加の`--`を入れない。URLはMarkdown linkではなく、
+上記のように角括弧や丸括弧を含まない生のHTTPS originとして貼り付ける。実行前に
+`node --version`がrepositoryの`.node-version`と同じ`v24.19.0`であることも確認する。
 
 最初の`read`で表示が止まったら、password managerからtokenを貼り付けてEnterを押す。
 画面にtokenが表示されないのが正常である。smoke commandはtargetをこのstaging originへ
@@ -754,10 +758,10 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 ### P4b最初のremote upload直前に行う
 
-- [ ] project commandでstaging owner tokenを生成しpassword managerへ保存する。
-- [ ] `EDGEFOSS_OWNER_TOKEN`をstaging Worker secretとして設定する。
-- [ ] schema 3 deployとhealth成功前にはremote upload smokeを実行しない。
-- [ ] 案内後にsynthetic staging smokeを一度実行し、tokenをunsetする。
+- [x] project commandでstaging owner tokenを生成しpassword managerへ保存する。
+- [x] `EDGEFOSS_OWNER_TOKEN`をstaging Worker secretとして設定する。
+- [x] schema 3 deployとhealth成功前にはremote upload smokeを実行しない。
+- [x] 案内後にsynthetic staging smokeを一度実行し、tokenをunsetする。
 
 ### 必要になった時だけ行う
 

@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 5（U3a owner認証済みupload checkpointを反映）
+改訂: Revision 6（P4b authenticated remote upload gate完了を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -622,7 +622,11 @@ Exit gate G3:
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
 
-現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0とP4a、U2、U3は完了した。account限定tokenによるmanual main-only staging deployとbounded stateful healthがgreenである。P4b internal small-blob coreはschema 2としてstagingへ移行済みである。次はU3aを通してowner認証済みHTTP adapterをschema 3へdeployし、synthetic remote writeを一度だけ検証する。
+現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0、P4a、
+U2、U3、U3aは完了した。P4bではowner認証済みHTTP adapterをschema 3へdeployし、
+固定30 byteのsynthetic public blobについてstaging、checksum検証、finalize、同一操作の
+再送収束をstagingで確認した。次はP4cでartifact acceptance、realm ref CAS、operation
+dedupeを一つのRepositoryDO transactionとして実装する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -730,13 +734,17 @@ migrationとstateful healthに成功した。この時点ではremote upload wri
 [`P4b local evidence`](../evidence/p4b-small-blob-core-local-2026-08-25.md)、
 [`P4b remote migration evidence`](../evidence/p4b-small-blob-core-remote-2026-08-25.md)を参照する。
 
-P4b authenticated adapter実行状況（2026-08-25）: schema 3でuploadをbootstrap
+P4b authenticated adapter完了（2026-08-25）: schema 3でuploadをbootstrap
 `owner` principalへbindし、required Worker secret、timing-safe Bearer認証、16 KiB JSONと
 16 MiB contentのbounded read、conditional staging write、宣言/content/finalize再送を持つ
 HTTP adapterをlocal実装した。token generatorとsynthetic staging smokeも値をargumentや
-outputへ出さない形で追加した。commit/通常CI後にU3aを案内し、schema 3 deploy成功後だけ
-remote smokeを行う。詳細は[`ADR 0029`](../adr/0029-owner-authenticated-small-upload-adapter.md)と
-[`local evidence`](../evidence/p4b-authenticated-upload-adapter-local-2026-08-25.md)を参照する。
+outputへ出さない形で追加した。commit `6407890`の通常CI成功後にU3aを実施し、staging
+secret設定、schema 3 deploy、stateful healthを順番に通過した。その後だけremote smokeを
+実行し、30 byteの固定public blobが`finalized`となり、宣言/content/finalizeの再送が同じ
+uploadへ収束した。production、members data、Queue consumerは変更していない。詳細は
+[`ADR 0029`](../adr/0029-owner-authenticated-small-upload-adapter.md)、
+[`local evidence`](../evidence/p4b-authenticated-upload-adapter-local-2026-08-25.md)、
+[`remote evidence`](../evidence/p4b-authenticated-upload-adapter-remote-2026-08-25.md)を参照する。
 
 成果物:
 
