@@ -1,6 +1,7 @@
 # EdgeFossil 実装前にユーザーが準備するものの調査メモ
 
 調査日: 2026-08-24  
+最終更新: 2026-08-25
 対象環境: macOS 15.6.1 / Apple Silicon  
 位置づけ: [`EdgeFossil実装計画書.md`](../plans/EdgeFossil実装計画書.md) を進めるために、project ownerが自分で取得・設定する必要があるものを、必要になる時期ごとに整理したもの
 
@@ -18,6 +19,7 @@
 | P4直前 | R2 subscriptionとbilling profile | その時に設定 |
 | 最初のR2/DO作成前 | data residency方針 | 法的要件がなければAutomatic |
 | CIからdeployする時 | account IDとscoped Cloudflare API token | それまでは不要 |
+| P4bで最初の認証済みremote uploadを行う時 | EdgeFossil staging owner tokenとWorker secret | adapterのcommit・通常CI成功後だけ必要 |
 | P7でdirect large uploadを実装する時 | bucket限定R2 S3 credentials | 方式確定まで不要 |
 | production custom URLを使う時 | Cloudflare管理zone/custom domain | 条件付き。開発には不要 |
 
@@ -28,6 +30,7 @@ Cloudflare Workers Paid plan、独自domain、D1、KV、Cloudflare Access、Turn
 - R2 bucket名、Queue名、Worker名はP0で命名規則を決めてから作る。
 - R2 jurisdictionは作成後に変更できないため、最初のbucket作成前にだけ確認する。
 - CI用API tokenはCI deployを作る時に、必要なaccountへ限定して発行する。
+- EdgeFossil owner tokenは認証済みupload adapterがgreenになってからstagingだけに設定する。
 - S3 credentialsはWorker bindingだけで足りる段階では発行しない。
 - custom domainは`workers.dev`でstagingを検証した後に設定する。
 
@@ -530,6 +533,67 @@ Cloudflareの公式GitHub Actions手順も、localでは`wrangler login`、CIで
 - [Deploy Workers with GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)
 - [Wrangler system environment variables](https://developers.cloudflare.com/workers/wrangler/system-environment-variables/)
 
+### 10.3 最初のremote upload直前にEdgeFossil owner tokenを設定する
+
+これはGitHub ActionsがCloudflareを操作するためのAPI tokenではなく、EdgeFossil
+applicationのupload APIへownerとして認証するためのbootstrap secretである。P4bの
+認証済みadapterがcommitされ通常CIに通るまでは作らない。stagingだけに一つ設定し、
+production用はまだ作らない。
+
+1. repository rootで次を実行する。
+
+   ```bash
+   pnpm run auth:generate-owner-token
+   ```
+
+2. 表示された`efoss_owner_v0_...`をpassword managerへ保存する。項目名は
+   `EdgeFossil staging owner token`など、環境が分かる名前にする。
+3. tokenをargument、shell profile、`.env`、repository、issue、chatへ貼らず、次の
+   commandをそのまま実行する。
+
+   ```bash
+   pnpm exec wrangler secret put EDGEFOSS_OWNER_TOKEN --env staging --config apps/worker/wrangler.jsonc
+   ```
+
+4. Wranglerがsecret valueを求めた時だけpassword managerから貼り付けて確定する。
+   command lineへvalueを続けて書かない。
+5. command成功だけを報告し、token valueや先頭・末尾文字を報告しない。
+6. その後、`main`からmanual `Deploy staging Worker` workflowを実行する。healthが
+   `schemaVersion: 3`を返すまではremote upload smokeを実行しない。
+
+`wrangler secret put`はWorker secretを変更し、新しいWorker versionをdeployする操作で
+ある。従って通常CI成功後、このcheckpointで一度だけ実行する。紛失・漏洩の疑いが
+ある場合は新しいtokenを生成して同じcommandで置き換え、古い値をpassword manager
+から削除する。
+
+参考:
+
+- [Workers secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+- [Wrangler secrets](https://developers.cloudflare.com/workers/wrangler/commands/#secret)
+
+### 10.4 schema 3 health成功後にsynthetic uploadを一度だけ確認する
+
+実装担当者がschema 3 health成功を確認して案内した後にだけ行う。次のcommandはtokenを
+shell historyへ残さず、そのprocess環境からreview済みsmokeへ渡す。
+
+```bash
+read -r -s EDGEFOSS_OWNER_TOKEN
+export EDGEFOSS_OWNER_TOKEN
+pnpm run cloud:smoke-upload -- --origin https://edgefoss-staging.miga-and-raia.workers.dev
+unset EDGEFOSS_OWNER_TOKEN
+```
+
+最初の`read`で表示が止まったら、password managerからtokenを貼り付けてEnterを押す。
+画面にtokenが表示されないのが正常である。smoke commandはtargetをこのstaging originへ
+固定し、宣言・content・finalizeを各再送して同じ結果へ収束することとschema 3 healthを
+確認する。
+
+この操作はstagingの`PUBLIC_BLOBS`へ30 byteの固定synthetic objectを一つ作り、対応する
+upload/blob rowをRepositoryDOへ残すremote mutationである。自動削除はまだ実装しない。
+同じoperation IDとcontentを使うためcommand再実行でcanonical blobは増えないが、成功後
+に理由なく繰り返さない。報告するのは`state`、`retryConverged`、
+`repositorySchemaVersion`だけでよく、tokenは報告しない。
+
 ---
 
 ## 11. P7で必要になるR2 S3 credentials
@@ -688,6 +752,13 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [ ] data residency要件の有無を回答する。なければAutomaticを選ぶ。
 - [ ] `cloud:plan`が示すstaging resource名とjurisdictionをreviewする。
 
+### P4b最初のremote upload直前に行う
+
+- [ ] project commandでstaging owner tokenを生成しpassword managerへ保存する。
+- [ ] `EDGEFOSS_OWNER_TOKEN`をstaging Worker secretとして設定する。
+- [ ] schema 3 deployとhealth成功前にはremote upload smokeを実行しない。
+- [ ] 案内後にsynthetic staging smokeを一度実行し、tokenをunsetする。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。
@@ -707,6 +778,7 @@ password manager等に保存するもの:
 - billing profileの管理責任者
 - data residency判断と根拠
 - CI API tokenを作った日、scope、用途、rotation/revoke記録
+- EdgeFossil staging owner tokenと作成・rotation日
 - R2 S3 credentialを作った日、対象bucket、用途、rotation/revoke記録
 - production domain/zone ID。custom domainを使う場合のみ
 
@@ -734,7 +806,10 @@ repositoryへ保存してはいけないもの:
 
 ## 17. 最終提案
 
-userが今すぐ行う実作業は、Node.js 24への更新とCloudflare accountの安全確認だけでよい。
+2026-08-25時点でNode.js 24、account安全確認、Wrangler OAuth、workers.dev、R2、
+staging resources、CI deploy tokenまでは完了した。次に必要なのは、認証済みupload
+adapterのcommitと通常CI成功後にU3aとして行うEdgeFossil staging owner secret設定
+だけである。production secret、R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 
@@ -748,6 +823,8 @@ R2 subscription + data location確認
 staging resourcesをproject commandでprovision
         ↓ CI deploy開始時
 scoped API token
+        ↓ 最初の認証済みupload直前
+EdgeFossil staging owner secret
         ↓ direct upload採用時のみ
 bucket限定R2 S3 credentials
         ↓ production URLが必要な時のみ

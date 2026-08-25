@@ -7,8 +7,11 @@ const JSON_HEADERS = {
 } as const;
 
 const SINGLE_PROJECT_AUTHORITY = "edgefoss-single-project-v0";
-const REPOSITORY_SCHEMA_VERSION = 2;
+const OWNER_PRINCIPAL = "owner";
+const REPOSITORY_SCHEMA_VERSION = 3;
 const MAX_SMALL_BLOB_BYTES = 16 * 1024 * 1024;
+const MAX_JSON_BODY_BYTES = 16 * 1024;
+const OWNER_TOKEN_PATTERN = /^efoss_owner_v0_[A-Za-z0-9_-]{43}$/;
 
 export type CloudRealm = "public" | "members";
 export type UploadState =
@@ -18,6 +21,7 @@ export interface BeginUploadInput {
   blobId: string;
   byteSize: number;
   operationId: string;
+  principalId: string;
   realm: CloudRealm;
 }
 
@@ -43,6 +47,7 @@ interface UploadRow extends Record<string, SqlStorageValue> {
   failure: "hash_mismatch" | "size_mismatch" | null;
   final_key: string | null;
   operation_id: string;
+  principal_id: string;
   realm: CloudRealm;
   staging_key: string;
   state: UploadState;
@@ -137,6 +142,18 @@ export class RepositoryDO extends DurableObject<Env> {
       schemaVersion = 2;
     }
 
+    if (schemaVersion === 2) {
+      this.ctx.storage.sql.exec(
+        "ALTER TABLE upload_sessions ADD COLUMN principal_id TEXT NOT NULL DEFAULT 'owner'",
+      );
+      this.ctx.storage.sql.exec(
+        "UPDATE edgefoss_meta SET value = ? WHERE key = ?",
+        "3",
+        "schema_version",
+      );
+      schemaVersion = 3;
+    }
+
     if (schemaVersion !== REPOSITORY_SCHEMA_VERSION) {
       throw new Error("RepositoryDO schema version is unsupported.");
     }
@@ -148,7 +165,7 @@ export class RepositoryDO extends DurableObject<Env> {
     const existing = this.ctx.storage.sql
       .exec<UploadRow>(
         `SELECT upload_id, operation_id, realm, blob_id, byte_size,
-                staging_key, final_key, failure, state
+                staging_key, final_key, failure, state, principal_id
            FROM upload_sessions
           WHERE operation_id = ?`,
         input.operationId,
@@ -156,6 +173,7 @@ export class RepositoryDO extends DurableObject<Env> {
       .toArray()[0];
     if (existing) {
       if (
+        existing.principal_id !== input.principalId ||
         existing.realm !== input.realm ||
         existing.blob_id !== input.blobId ||
         existing.byte_size !== input.byteSize
@@ -170,8 +188,8 @@ export class RepositoryDO extends DurableObject<Env> {
     this.ctx.storage.sql.exec(
       `INSERT INTO upload_sessions (
          upload_id, operation_id, realm, blob_id, byte_size, staging_key,
-         final_key, failure, state, created_at, finalized_at
-       ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'declared', ?, NULL)`,
+         final_key, failure, state, created_at, finalized_at, principal_id
+       ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'declared', ?, NULL, ?)`,
       uploadId,
       input.operationId,
       input.realm,
@@ -179,14 +197,18 @@ export class RepositoryDO extends DurableObject<Env> {
       input.byteSize,
       stagingKey,
       Date.now(),
+      input.principalId,
     );
 
     return {
       status: "ok",
       upload: {
-        ...input,
+        blobId: input.blobId,
+        byteSize: input.byteSize,
         failure: null,
         finalKey: null,
+        operationId: input.operationId,
+        realm: input.realm,
         stagingKey,
         state: "declared",
         uploadId,
@@ -194,9 +216,51 @@ export class RepositoryDO extends DurableObject<Env> {
     };
   }
 
-  async finalizeUpload(uploadId: string): Promise<UploadResult> {
+  async stageUpload(
+    principalId: string,
+    uploadId: string,
+    bytes: ArrayBuffer,
+  ): Promise<UploadResult> {
+    validatePrincipal(principalId);
     validateUuid(uploadId, "upload_id");
-    let upload = this.#readUpload(uploadId);
+    let upload = this.#readUploadForPrincipal(uploadId, principalId);
+    if (upload.state === "finalized") return uploadResult(upload);
+    if (upload.state === "rejected") return uploadResult(upload);
+    if (bytes.byteLength !== upload.byte_size) {
+      return this.#rejectUpload(uploadId, "size_mismatch");
+    }
+
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    if (formatSha256(digest) !== upload.blob_id) {
+      return this.#rejectUpload(uploadId, "hash_mismatch");
+    }
+
+    const bucket = this.#bucketForRealm(upload.realm);
+    const stored = await bucket.put(upload.staging_key, bytes, {
+      onlyIf: { etagDoesNotMatch: "*" },
+      sha256: digest,
+    });
+    if (stored === null) {
+      await verifyExistingObject(
+        bucket,
+        upload.staging_key,
+        upload,
+        digest,
+        "upload_staging_conflict",
+      );
+    }
+
+    upload = this.#advanceUploadState(uploadId, "staged");
+    return uploadResult(upload);
+  }
+
+  async finalizeUpload(
+    principalId: string,
+    uploadId: string,
+  ): Promise<UploadResult> {
+    validatePrincipal(principalId);
+    validateUuid(uploadId, "upload_id");
+    let upload = this.#readUploadForPrincipal(uploadId, principalId);
     if (upload.state === "finalized") return uploadResult(upload);
     if (upload.state === "rejected") return uploadResult(upload);
 
@@ -249,9 +313,10 @@ export class RepositoryDO extends DurableObject<Env> {
     return this.#commitFinalized(uploadId, finalKey);
   }
 
-  getUpload(uploadId: string): UploadResult {
+  getUpload(principalId: string, uploadId: string): UploadResult {
+    validatePrincipal(principalId);
     validateUuid(uploadId, "upload_id");
-    return uploadResult(this.#readUpload(uploadId));
+    return uploadResult(this.#readUploadForPrincipal(uploadId, principalId));
   }
 
   #bucketForRealm(realm: CloudRealm): R2Bucket {
@@ -264,13 +329,20 @@ export class RepositoryDO extends DurableObject<Env> {
     const upload = this.ctx.storage.sql
       .exec<UploadRow>(
         `SELECT upload_id, operation_id, realm, blob_id, byte_size,
-                staging_key, final_key, failure, state
+                staging_key, final_key, failure, state, principal_id
            FROM upload_sessions
           WHERE upload_id = ?`,
         uploadId,
       )
       .toArray()[0];
     if (!upload) throw new Error("upload_not_found");
+    return upload;
+  }
+
+  #readUploadForPrincipal(uploadId: string, principalId: string): UploadRow {
+    const upload = this.#readUpload(uploadId);
+    if (upload.principal_id !== principalId)
+      throw new Error("upload_not_found");
     return upload;
   }
 
@@ -368,6 +440,7 @@ export class RepositoryDO extends DurableObject<Env> {
 }
 
 function validateBeginUpload(input: BeginUploadInput): void {
+  validatePrincipal(input.principalId);
   validateUuid(input.operationId, "operation_id");
   if (input.realm !== "public" && input.realm !== "members") {
     throw new Error("upload_realm_invalid");
@@ -381,6 +454,12 @@ function validateBeginUpload(input: BeginUploadInput): void {
     input.byteSize > MAX_SMALL_BLOB_BYTES
   ) {
     throw new Error("upload_size_invalid");
+  }
+}
+
+function validatePrincipal(principalId: string): void {
+  if (principalId !== OWNER_PRINCIPAL) {
+    throw new Error("upload_principal_invalid");
   }
 }
 
@@ -428,9 +507,25 @@ async function verifyExistingFinal(
   upload: UploadRow,
   expectedDigest: ArrayBuffer,
 ): Promise<void> {
+  return verifyExistingObject(
+    bucket,
+    key,
+    upload,
+    expectedDigest,
+    "final_blob_conflict",
+  );
+}
+
+async function verifyExistingObject(
+  bucket: R2Bucket,
+  key: string,
+  upload: UploadRow,
+  expectedDigest: ArrayBuffer,
+  conflictCode: string,
+): Promise<void> {
   const existing = await bucket.head(key);
   if (existing === null || existing.size !== upload.byte_size) {
-    throw new Error("final_blob_conflict");
+    throw new Error(conflictCode);
   }
   const checksum = existing.checksums.sha256;
   if (checksum && formatSha256(checksum) === formatSha256(expectedDigest)) {
@@ -439,11 +534,11 @@ async function verifyExistingFinal(
 
   const body = await bucket.get(key);
   if (body === null || body.size !== upload.byte_size) {
-    throw new Error("final_blob_conflict");
+    throw new Error(conflictCode);
   }
   const digest = await crypto.subtle.digest("SHA-256", await body.bytes());
   if (formatSha256(digest) !== upload.blob_id) {
-    throw new Error("final_blob_conflict");
+    throw new Error(conflictCode);
   }
 }
 
@@ -454,6 +549,288 @@ function jsonResponse(body: object, status = 200): Response {
   });
 }
 
+function errorResponse(
+  code: string,
+  message: string,
+  status: number,
+  headers?: HeadersInit,
+): Response {
+  const responseHeaders = new Headers(JSON_HEADERS);
+  if (headers) {
+    new Headers(headers).forEach((value, name) =>
+      responseHeaders.set(name, value),
+    );
+  }
+  return new Response(JSON.stringify({ error: { code, message } }), {
+    status,
+    headers: responseHeaders,
+  });
+}
+
+async function authorizeOwner(
+  request: Request,
+  env: Env,
+): Promise<Response | null> {
+  const expected = env.EDGEFOSS_OWNER_TOKEN ?? "";
+  const authorization = request.headers.get("authorization") ?? "";
+  const bearer = /^Bearer ([^\s]+)$/.exec(authorization)?.[1] ?? "";
+  const encoder = new TextEncoder();
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(bearer)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+
+  if (!OWNER_TOKEN_PATTERN.test(expected)) {
+    return errorResponse(
+      "owner_auth_unavailable",
+      "Owner authentication is not configured.",
+      503,
+    );
+  }
+  if (!crypto.subtle.timingSafeEqual(providedHash, expectedHash)) {
+    return errorResponse(
+      "unauthorized",
+      "A valid owner bearer token is required.",
+      401,
+      { "www-authenticate": 'Bearer realm="edgefoss"' },
+    );
+  }
+  return null;
+}
+
+async function readBoundedBody(
+  request: Request,
+  maximumBytes: number,
+): Promise<ArrayBuffer> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const declaredLength = Number(contentLength);
+    if (
+      !Number.isSafeInteger(declaredLength) ||
+      declaredLength < 0 ||
+      declaredLength > maximumBytes
+    ) {
+      throw new HttpRequestError(
+        "request_body_too_large",
+        "The request body exceeds the allowed size.",
+        413,
+      );
+    }
+  }
+
+  if (request.body === null) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    total += part.value.byteLength;
+    if (total > maximumBytes) {
+      try {
+        await reader.cancel("request body limit exceeded");
+      } catch {
+        // The size violation remains the client-visible error even if cancel fails.
+      }
+      throw new HttpRequestError(
+        "request_body_too_large",
+        "The request body exceeds the allowed size.",
+        413,
+      );
+    }
+    chunks.push(part.value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+async function readUploadDeclaration(
+  request: Request,
+): Promise<BeginUploadInput> {
+  if (
+    request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
+  ) {
+    throw new HttpRequestError(
+      "content_type_invalid",
+      "Content-Type must be application/json.",
+      415,
+    );
+  }
+  const body = await readBoundedBody(request, MAX_JSON_BODY_BYTES);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw new HttpRequestError(
+      "request_json_invalid",
+      "The request body must be valid JSON.",
+      400,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpRequestError(
+      "request_json_invalid",
+      "The request body must be a JSON object.",
+      400,
+    );
+  }
+  const input = parsed as Record<string, unknown>;
+  if (
+    typeof input.blobId !== "string" ||
+    typeof input.byteSize !== "number" ||
+    typeof input.operationId !== "string" ||
+    (input.realm !== "public" && input.realm !== "members")
+  ) {
+    throw new HttpRequestError(
+      "upload_declaration_invalid",
+      "The upload declaration is invalid.",
+      400,
+    );
+  }
+  return {
+    blobId: input.blobId,
+    byteSize: input.byteSize,
+    operationId: input.operationId,
+    principalId: OWNER_PRINCIPAL,
+    realm: input.realm,
+  };
+}
+
+class HttpRequestError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+function repositoryStub(env: Env): DurableObjectStub<RepositoryDO> {
+  return env.REPOSITORY.getByName(SINGLE_PROJECT_AUTHORITY, {
+    locationHint: "apac-ne",
+  });
+}
+
+async function handleUploadApi(
+  request: Request,
+  env: Env,
+  pathname: string,
+): Promise<Response> {
+  const authorizationFailure = await authorizeOwner(request, env);
+  if (authorizationFailure) return authorizationFailure;
+
+  const repository = repositoryStub(env);
+  if (pathname === "/api/v0/uploads") {
+    if (request.method !== "POST") {
+      return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+        allow: "POST",
+      });
+    }
+    const result = await repository.beginUpload(
+      await readUploadDeclaration(request),
+    );
+    return result.status === "conflict"
+      ? errorResponse(
+          result.code,
+          "The operation ID was already used for different input.",
+          409,
+        )
+      : jsonResponse({ upload: result.upload });
+  }
+
+  const match =
+    /^\/api\/v0\/uploads\/([0-9a-f-]+)(?:\/(content|finalize))?$/.exec(
+      pathname,
+    );
+  if (!match) {
+    return errorResponse(
+      "not_found",
+      "The requested resource does not exist.",
+      404,
+    );
+  }
+  const uploadId = match[1];
+  if (!uploadId) {
+    return errorResponse(
+      "not_found",
+      "The requested resource does not exist.",
+      404,
+    );
+  }
+  const action = match[2];
+  if (action === "content") {
+    if (request.method !== "PUT") {
+      return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+        allow: "PUT",
+      });
+    }
+    const bytes = await readBoundedBody(request, MAX_SMALL_BLOB_BYTES);
+    const upload = await repository.stageUpload(
+      OWNER_PRINCIPAL,
+      uploadId,
+      bytes,
+    );
+    return jsonResponse({ upload });
+  }
+  if (action === "finalize") {
+    if (request.method !== "POST") {
+      return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+        allow: "POST",
+      });
+    }
+    const upload = await repository.finalizeUpload(OWNER_PRINCIPAL, uploadId);
+    return jsonResponse({ upload });
+  }
+  if (request.method !== "GET") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "GET",
+    });
+  }
+  return jsonResponse({
+    upload: await repository.getUpload(OWNER_PRINCIPAL, uploadId),
+  });
+}
+
+function mapRequestError(error: unknown, pathname: string): Response {
+  if (error instanceof HttpRequestError) {
+    return errorResponse(error.code, error.message, error.status);
+  }
+  const message = error instanceof Error ? error.message : "unknown_error";
+  if (message === "upload_not_found") {
+    return errorResponse("upload_not_found", "The upload does not exist.", 404);
+  }
+  if (message.endsWith("_invalid") || message === "upload_size_invalid") {
+    return errorResponse(
+      "upload_declaration_invalid",
+      "The upload declaration is invalid.",
+      400,
+    );
+  }
+  if (
+    message === "upload_not_staged" ||
+    message === "upload_staging_changed" ||
+    message === "upload_staging_conflict" ||
+    message === "final_blob_conflict"
+  ) {
+    return errorResponse(message, "The upload could not be finalized.", 409);
+  }
+  console.error(
+    JSON.stringify({
+      error: message,
+      message: "request failed",
+      path: pathname,
+    }),
+  );
+  return errorResponse("internal_error", "The request failed.", 500);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -462,9 +839,7 @@ export default {
       (request.method === "GET" || request.method === "HEAD") &&
       url.pathname === "/health"
     ) {
-      const repository = env.REPOSITORY.getByName(SINGLE_PROJECT_AUTHORITY, {
-        locationHint: "apac-ne",
-      });
+      const repository = repositoryStub(env);
       const repositoryHealth = await repository.health();
       const body = {
         components: {
@@ -486,6 +861,14 @@ export default {
       }
 
       return jsonResponse(body);
+    }
+
+    if (url.pathname.startsWith("/api/v0/uploads")) {
+      try {
+        return await handleUploadApi(request, env, url.pathname);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
     }
 
     return jsonResponse(

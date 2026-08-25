@@ -52,6 +52,9 @@
   "env": {
     "staging": {
       "name": "edgefoss-staging",
+      "secrets": {
+        "required": ["EDGEFOSS_OWNER_TOKEN"],
+      },
       "vars": {
         "EDGEFOSS_ENV": "staging",
       },
@@ -81,6 +84,9 @@
     "production": {
       "name": "edgefoss-production",
       "workers_dev": false,
+      "secrets": {
+        "required": ["EDGEFOSS_OWNER_TOKEN"],
+      },
       "vars": {
         "EDGEFOSS_ENV": "production",
       },

@@ -1,8 +1,8 @@
 # EdgeFossil 実装計画書
 
 作成日: 2026-08-24  
-最終レビュー: 2026-08-24  
-改訂: Revision 4（段階別USER-ACTION checkpointを反映）  
+最終レビュー: 2026-08-25
+改訂: Revision 5（U3a owner認証済みupload checkpointを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -430,6 +430,7 @@ Cloudflare accountやbillingを先に作り込まず、必要になるincrement�
 | U1 | P3、またはP3をlocalだけで終えた場合はP4で、初めてremote deployする直前 | Cloudflare account選択、2FA/recovery codes、project-local Wrangler OAuth、`workers.dev`設定 | account名を伏せてもよい`whoami`成功とdeploy先確認 | local/static buildは継続可、remote demoは停止 |
 | U2 | P4aで最初のR2/DO resourceを作る直前 | R2 subscription checkout、data residency判断、`cloud:plan` review | subscription利用可、policy decision、承認したplan artifact | remote stateful sliceを開始しない |
 | U3 | CI deploy jobを初めて有効にする直前 | account限定Cloudflare API tokenとaccount IDをCI secret/variableへ登録 | secret名、scope summary、作成日。値は記録しない | manual OAuth deployを継続しCI deployは停止 |
+| U3a | P4bで最初の認証済みremote uploadを行う直前 | project commandでowner tokenを生成・保管し、staging Worker secretへ登録 | secret名、対象環境、設定成功。値は記録しない | upload routeはfail-closedのままremote writeを停止 |
 | U4 | P7aでdirect R2 upload方式を採用した時だけ | 対象bucket限定R2 S3 credentialsを発行しWorker secretへ登録 | credential名、bucket scope、作成日。値は記録しない | binding経由uploadを継続、direct uploadは停止 |
 | U5 | P9でproduction topologyを確定する時 | custom domain採否、Workers Paid採否を実測から判断。採用時だけ設定 | decision record、domain healthまたはplan変更記録 | `workers.dev`/現planで成立するならblockしない |
 | U6 | P10 production deploy直前 | production用token/secret、manual approval、backup責任者を最終確認 | redacted release checklist | production releaseを停止 |
@@ -621,7 +622,7 @@ Exit gate G3:
 - complete bundleから同じsite/semantic rootを再生成できる。
 - artifact数増加時に一artifact一assetへ爆発しないchunk/paging方式が確認される。
 
-現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0とP4a、U2、U3は完了した。account限定tokenによるmanual main-only staging deployとbounded stateful healthがgreenである。次はP4b small-blob state machineを、認証前にはpublic write routeを開かないinternal RPCから実装する。
+現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0とP4a、U2、U3は完了した。account限定tokenによるmanual main-only staging deployとbounded stateful healthがgreenである。P4b internal small-blob coreはschema 2としてstagingへ移行済みである。次はU3aを通してowner認証済みHTTP adapterをschema 3へdeployし、synthetic remote writeを一度だけ検証する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -709,12 +710,33 @@ U3完了（2026-08-25）: bounded retry改善をcommitした`main`からworkflow
 staging deployとstateful healthがともに成功した。token permission、Cloudflare resource、
 production設定は追加していない。
 
+owner upload認証checkpoint U3a:
+
+1. owner認証済みadapter、schema 3 migration、token generator、remote smoke commandが
+   localでgreenになり、commit後の通常CIが成功するまではtokenを作らない。
+2. 成功後、account ownerへ[`owner token設定手順`](../notes/EdgeFossil実装前にユーザーが準備するものの調査メモ.md#103-最初のremote-upload直前にedgefossil-owner-tokenを設定する)を示す。
+3. account owner自身がtokenを生成してpassword managerへ保存し、
+   `EDGEFOSS_OWNER_TOKEN`をstaging Worker secretへ設定する。値の報告は求めない。
+4. `main`からmanual deployを行い、healthがschema 3になるまでremote writeを行わない。
+5. schema 3 health成功後にだけ、secretを環境変数から渡すreview済みsynthetic smokeを
+   stagingへ実行する。production、members data、Queueは対象外とする。
+
 P4b実行状況（2026-08-25）: 認証前のpublic mutationを避け、schema 2へmigrationする
 `upload_sessions`/`blobs`、typed internal RPC、16 MiB上限、realm別R2、ETag固定read、
 application SHA-256検証、conditional final write、transactional acceptance、operation/finalize
-再送をlocal実装した。HTTP write routeとremote upload smokeはまだ追加しない。詳細は
+再送をlocal実装した。commit `13ccfa0`をmanual staging deployし、schema 1から2への
+migrationとstateful healthに成功した。この時点ではremote upload writeを行っていない。詳細は
 [`ADR 0028`](../adr/0028-internal-small-blob-finalization-core.md)と
-[`P4b local evidence`](../evidence/p4b-small-blob-core-local-2026-08-25.md)を参照する。
+[`P4b local evidence`](../evidence/p4b-small-blob-core-local-2026-08-25.md)、
+[`P4b remote migration evidence`](../evidence/p4b-small-blob-core-remote-2026-08-25.md)を参照する。
+
+P4b authenticated adapter実行状況（2026-08-25）: schema 3でuploadをbootstrap
+`owner` principalへbindし、required Worker secret、timing-safe Bearer認証、16 KiB JSONと
+16 MiB contentのbounded read、conditional staging write、宣言/content/finalize再送を持つ
+HTTP adapterをlocal実装した。token generatorとsynthetic staging smokeも値をargumentや
+outputへ出さない形で追加した。commit/通常CI後にU3aを案内し、schema 3 deploy成功後だけ
+remote smokeを行う。詳細は[`ADR 0029`](../adr/0029-owner-authenticated-small-upload-adapter.md)と
+[`local evidence`](../evidence/p4b-authenticated-upload-adapter-local-2026-08-25.md)を参照する。
 
 成果物:
 

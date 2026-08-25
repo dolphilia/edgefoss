@@ -15,6 +15,7 @@ describe("RepositoryDO small blob uploads", () => {
       blobId: `sha256:${"11".repeat(32)}`,
       byteSize: 12,
       operationId: "00000000-0000-4000-8000-000000000001",
+      principalId: "owner",
       realm: "public" as const,
     };
 
@@ -34,13 +35,17 @@ describe("RepositoryDO small blob uploads", () => {
       blobId: expectedBlobId,
       byteSize: bytes.byteLength,
       operationId: "00000000-0000-4000-8000-000000000003",
+      principalId: "owner",
       realm: "public",
     });
     if (declaration.status !== "ok") throw new Error("unexpected conflict");
     const declared = declaration.upload;
     await env.PUBLIC_BLOBS.put(declared.stagingKey, bytes);
 
-    const finalized = await repository.finalizeUpload(declared.uploadId);
+    const finalized = await repository.finalizeUpload(
+      "owner",
+      declared.uploadId,
+    );
     expect(finalized).toMatchObject({
       blobId: expectedBlobId,
       failure: null,
@@ -49,9 +54,9 @@ describe("RepositoryDO small blob uploads", () => {
     expect(finalized.finalKey).toContain(
       `/public/sha256/${expectedBlobId.slice(7, 9)}/${expectedBlobId.slice(7)}`,
     );
-    await expect(repository.finalizeUpload(declared.uploadId)).resolves.toEqual(
-      finalized,
-    );
+    await expect(
+      repository.finalizeUpload("owner", declared.uploadId),
+    ).resolves.toEqual(finalized);
     await expect(
       env.PUBLIC_BLOBS.get(finalized.finalKey!).then((object) =>
         object?.text(),
@@ -67,13 +72,17 @@ describe("RepositoryDO small blob uploads", () => {
       blobId: expectedBlobId,
       byteSize: bytes.byteLength,
       operationId: "00000000-0000-4000-8000-000000000004",
+      principalId: "owner",
       realm: "members",
     });
     if (declaration.status !== "ok") throw new Error("unexpected conflict");
     const declared = declaration.upload;
     await env.RESTRICTED_BLOBS.put(declared.stagingKey, bytes);
 
-    const finalized = await repository.finalizeUpload(declared.uploadId);
+    const finalized = await repository.finalizeUpload(
+      "owner",
+      declared.uploadId,
+    );
     expect(finalized.finalKey).toBe(
       `objects/edgefoss-single-project-v0/members/${declared.uploadId}`,
     );
@@ -95,14 +104,15 @@ describe("RepositoryDO small blob uploads", () => {
       blobId: await blobId(bytes),
       byteSize: bytes.byteLength,
       operationId: "00000000-0000-4000-8000-000000000006",
+      principalId: "owner",
       realm: "public",
     });
     if (declaration.status !== "ok") throw new Error("unexpected conflict");
     await env.PUBLIC_BLOBS.put(declaration.upload.stagingKey, bytes);
 
     const results = await Promise.all([
-      repository.finalizeUpload(declaration.upload.uploadId),
-      repository.finalizeUpload(declaration.upload.uploadId),
+      repository.finalizeUpload("owner", declaration.upload.uploadId),
+      repository.finalizeUpload("owner", declaration.upload.uploadId),
     ]);
     expect(results[0]).toEqual(results[1]);
     expect(results[0]).toMatchObject({ failure: null, state: "finalized" });
@@ -117,20 +127,24 @@ describe("RepositoryDO small blob uploads", () => {
       blobId: await blobId(expected),
       byteSize: expected.byteLength,
       operationId: "00000000-0000-4000-8000-000000000005",
+      principalId: "owner",
       realm: "public",
     });
     if (declaration.status !== "ok") throw new Error("unexpected conflict");
     const declared = declaration.upload;
     await env.PUBLIC_BLOBS.put(declared.stagingKey, corrupt);
 
-    const rejected = await repository.finalizeUpload(declared.uploadId);
+    const rejected = await repository.finalizeUpload(
+      "owner",
+      declared.uploadId,
+    );
     expect(rejected).toMatchObject({
       failure: "hash_mismatch",
       finalKey: null,
       state: "rejected",
     });
-    await expect(repository.finalizeUpload(declared.uploadId)).resolves.toEqual(
-      rejected,
-    );
+    await expect(
+      repository.finalizeUpload("owner", declared.uploadId),
+    ).resolves.toEqual(rejected);
   });
 });
