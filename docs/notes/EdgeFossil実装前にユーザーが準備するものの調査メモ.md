@@ -872,11 +872,14 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] cursor keyはRepositoryDO内部で遅延生成し、新しいuser-managed secretを要求しない。
 - [x] local testではHTTP route、暗号、漏えい、改ざん、失効を検証する。
 - [x] schema migration、binding、Queue/R2、remote変更をlocal incrementに含めない。
-- [ ] P5a1実装をcommitし、通常CIを通す。
-- [ ] stagingのpublic artifact IDとkindが匿名列挙可能になる効果をaccount ownerが明示承認する。
-- [ ] 最初のpaged inventoryでrandom cursor key meta 1行が作られ得ることを明示承認する。
+- [x] P5a1実装をcommitし、通常CIを通す。
+- [x] stagingのpublic artifact IDとkindが匿名列挙可能になる効果をaccount ownerが明示承認する。
+- [x] 最初のpaged inventoryでrandom cursor key meta 1行が作られ得ることを明示承認する。
+- [x] `HELLO`だけを検証しinventoryを呼ばないpost-deploy audit commandを実装する。
+- [ ] audit commandと承認記録をcommitし、通常CIを通す。
 - [ ] 承認後だけmanual staging deploy、schema 5 health、anonymous `HELLO`を確認する。
-- [ ] `HELLO`確認まではinventoryを呼ばず、cursor key生成やartifact列挙を行わない。
+- [ ] 運用者自身は`HELLO`確認までinventoryを呼ばない。ただしdeploy直後から第三者が
+      anonymous inventoryを呼び、cursor keyを生成し得るため、key未生成は保証・合格条件にしない。
 
 このcheckpointで新しいCloudflare resource、secret、credentialは作成しない。
 

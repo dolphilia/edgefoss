@@ -65,3 +65,18 @@ request was made.
 After the full local gate and ordinary CI, remote staging activation remains
 blocked until the account owner approves anonymous enumeration of staging
 public artifact IDs/kinds and the possible one-row cursor-key initialization.
+
+Commit `02bae88` and its ordinary GitHub Actions run were confirmed successful
+by the account owner. The remaining block is the explicit remote-publication
+approval. Once deployed, an anonymous third party can call inventory before the
+operator's probe and trigger lazy cursor-key initialization; absence of that row
+cannot be used as a post-deploy invariant.
+
+The account owner then explicitly approved both staging effects: anonymous
+enumeration of public artifact IDs/kinds and possible lazy creation of the one
+cursor-key meta row. A dedicated `cloud:audit-public-sync` command now validates
+only anonymous `HELLO`; it sends exactly one credential-free GET and never calls
+inventory. The manual deployment workflow runs this after the existing stateful
+health audit. Its focused Node test matrix has 4 tests, and the combined cloud
+deploy suite has 12 tests. Commit and ordinary CI for this audit increment remain
+the final pre-deploy gate.

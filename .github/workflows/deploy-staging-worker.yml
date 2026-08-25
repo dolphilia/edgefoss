@@ -57,3 +57,5 @@ jobs:
           wranglerVersion: 4.125.0
       - name: Verify stateful staging health
         run: node tools/audit-worker-health.mjs --origin https://edgefoss-staging.miga-and-raia.workers.dev
+      - name: Verify anonymous public sync HELLO
+        run: node tools/audit-worker-public-sync.mjs --origin https://edgefoss-staging.miga-and-raia.workers.dev

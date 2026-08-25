@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 22（P5a1 encrypted public inventory adapterを反映）
+改訂: Revision 23（P5a1 staging公開承認とHELLO-only auditを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -974,7 +974,7 @@ P5aはさらに小さく分割する。
 | increment | 完了状態 |
 |---|---|
 | P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
-| P5a1 external read adapter | local実装完了。commit/通常CIとremote公開効果承認待ち |
+| P5a1 external read adapter | code CI/公開効果承認完了。HELLO audit commit/CI待ち |
 | P5a2 transfer/import | public artifact body transfer、fresh local import、resume |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
@@ -996,8 +996,15 @@ productionは不変である。focused test、full local gate、両named dry-run
 [`P5a1 local evidence`](../evidence/p5a1-public-sync-adapter-local-2026-08-25.md)を参照する。
 
 remote staging deployは、既存public artifactのIDとkindが匿名列挙可能になる公開効果である。
-commit/通常CI後も自動では進めず、account ownerがこの公開効果と最初のpaged requestによる
-cursor key meta 1行の生成可能性を承認してから行う。`TRANSFER`とlocal importはまだ未実装である。
+commit `02bae88`と通常CIは成功したが自動では進めず、account ownerがこの公開効果と最初の
+paged requestによるcursor key meta 1行の生成可能性を承認してから行う。deploy直後から第三者が
+anonymous inventoryを呼べるため、運用者のprobe前にkeyが生成される可能性も承認範囲へ含める。
+`TRANSFER`とlocal importはまだ未実装である。
+
+account ownerはstagingでの匿名public ID/kind列挙とcursor key meta 1行の生成可能性を明示承認した。
+post-deploy検証にはcredentialを送らず`HELLO`を一度だけGETする`cloud:audit-public-sync`を使う。
+このcommandはinventoryを呼ばず、manual deploy workflowではstateful health成功後に実行する。
+次gateはこのauditと承認記録のcommit/通常CIであり、それまではdeployしない。
 
 API原則:
 

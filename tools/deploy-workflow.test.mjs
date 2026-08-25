@@ -25,6 +25,8 @@ test("staging deployment workflow is manual, main-only, and least privilege", as
   assert.match(workflow, /secrets\.CLOUDFLARE_ACCOUNT_ID/u);
   assert.match(workflow, /Require the U3 credentials/u);
   assert.match(workflow, /audit-worker-health\.mjs/u);
+  assert.match(workflow, /audit-worker-public-sync\.mjs/u);
+  assert.doesNotMatch(workflow, /cloud:smoke-public-inventory/u);
   assert.doesNotMatch(workflow, /cloud:provision|--env production/u);
 });
 
