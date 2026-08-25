@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 18（P4d bounded local Queue failure matrixを反映）
+改訂: Revision 19（P4d完了とG4 policy linearization残件を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -645,8 +645,12 @@ smokeをlocal実装した。observation adapterのQueueなしdeploy、schema 5 h
 canonical writeを増やさないbounded failure injectionとDLQ観測契約をlocal設計する。
 applicationとCloudflare管理DLQの責任境界を分け、Queue response loss、delivery-before-enqueued、
 duplicate、out-of-order、mixed valid/invalid batch、attempt 1–4 retry、log redactionをWorkers runtimeで
-注入するlocal harnessを実装した。full local gateとnamed dry-runはgreenであり、次はcommitと
-通常CIである。remote poison messageは使わない。
+注入するlocal harnessを実装した。full local gate、named dry-run、commit後の通常CIはgreenである。
+続くbehavior-preserving staging deployもschema 5とQueue設定を維持し、既存sequence 4は
+`delivered`、send attempts 1、totalはpending 0/enqueued 1/delivered 1のままであった。
+remote poison messageは使用せず、実DLQ移送は観測済みと主張しない。P4dは完了した。
+G4はACL revokeとconcurrent publishのauthority orderが未実装のためまだno-goであり、
+次はcloud surfaceを増やさないP4e policy linearizationをlocalで実装する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -658,7 +662,8 @@ P4は一括実装しない。
 | P4a deployment | Worker、RepositoryDO、分離R2 bindingsがstagingで起動しhealth check可能 |
 | P4b upload | small blobのstaging→verify→finalizeと再送が安全 |
 | P4c publish | 完了。artifact acceptance、realm ref CAS、operation dedupeが一transaction |
-| P4d recovery | outbox/alarm/Queue smokeとfailure matrixがgreen |
+| P4d recovery | 完了。outbox/alarm/Queue smokeとbounded failure matrixがgreen |
+| P4e G4 policy closure | owner-only policy epoch mutationとconcurrent publishをauthority orderへlinearize |
 
 stateful resource作成checkpoint U2:
 
@@ -852,7 +857,15 @@ exact validateし、response loss後にpendingのままdeliveryされたeventも
 duplicate ackを経てoutbox 1件・delivery 1件へ収束する。retry 3＋専用DLQはmanifest/configで固定し、
 handlerは4回目までexplicit retryを返す。実DLQ移送はCloudflare管理動作でありlocal evidenceでは
 観測済みと主張しない。remote Queue停止やpoison messageは不要と判断した。full local checkと
-named staging/production dry-runはgreenで、次gateはcommit/通常CIである。詳細は
+named staging/production dry-runはgreenとなり、commit/通常CIも成功した。その後の
+behavior-preserving staging deployではhealthとschema 5を維持し、producer/consumer、batch、
+retry、DLQ、3 R2 bindingもreview済み設定と一致した。読み取り専用観測では
+sequence 4が`delivered`、send attempts 1、totalがpending 0/enqueued 1/delivered 1を維持した。
+smoke再実行、artifact publish、R2 write、failure injection、production変更はない。
+これによりP4dは完了した。一方、G4のACL revokeとconcurrent publishのlinearizationは
+現行のowner-only authorityにmutationがないため未達である。次はP5ではなく、
+policy epochを進める最小internal mutationとpublishの競合を一つのDO orderに固定する
+P4eをlocal-onlyで実装する。詳細は
 [`ADR 0032`](../adr/0032-transactional-authority-outbox-and-bounded-alarm-drain.md)と
 [`ADR 0033`](../adr/0033-owner-only-outbox-observation-and-single-event-smoke.md)、
 [`ADR 0034`](../adr/0034-staging-first-queue-activation.md)、
@@ -864,7 +877,8 @@ named staging/production dry-runはgreenで、次gateはcommit/通常CIである
 [`P4d Queue binding remote evidence`](../evidence/p4d-staging-queue-binding-remote-2026-08-25.md)、
 [`P4d Queue success-path remote evidence`](../evidence/p4d-sequence4-queue-smoke-remote-2026-08-25.md)、
 [`ADR 0035`](../adr/0035-bounded-queue-failure-matrix.md)、
-[`P4d failure matrix local evidence`](../evidence/p4d-queue-failure-matrix-local-2026-08-25.md)を参照する。
+[`P4d failure matrix local evidence`](../evidence/p4d-queue-failure-matrix-local-2026-08-25.md)、
+[`P4d failure matrix remote deploy evidence`](../evidence/p4d-queue-failure-matrix-remote-deploy-2026-08-25.md)を参照する。
 
 成果物:
 
@@ -907,6 +921,17 @@ Exit gate G4:
 - ACL revokeとconcurrent publishが一つのauthority orderへlinearizeする。
 - visible artifactがmissing/unverified blobを参照しない。
 - Queueを停止してもcanonical writeは成功し、復旧後outboxがdrainする。
+
+現在の判定（2026-08-25）: P4dまでの条件は証跡が揃った。R2/DO/response/Queue境界、
+100回再送、missing/unverified blob、Queue送信失敗後のrecoveryはgreenである。ただし、
+ACL revokeに相当するpolicy mutationとconcurrent publishのlinearizationは未実装であるため
+G4はno-goである。P5には進まず、P4eで次をlocalで証明する。
+
+- policy mutationはexpected epochとoperation IDを持ち、同一operation再送は一つの結果へ収束する。
+- publishとpolicy mutationの競合はDOが決めた順で一方が受理され、古いepochのpublishは安定したconflictになる。
+- policy mutation前に受理済みのcanonical artifactを後から破壊しない。
+- 最初はinternal RPCとWorkers runtime testのみとし、HTTP route、schema migration、remote deploy、
+  Queue/R2変更、新しいcredentialを追加しない。
 
 ### P5: sync v0（6–9 person-weeks）
 

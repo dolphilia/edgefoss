@@ -842,7 +842,18 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] DLQ transferを直接確認できない限り、`enqueued`滞留やretry回数だけでDLQ成功としない。
 - [x] remote Queue停止、consumer削除、poison message送信は別の効果承認前に行わない。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] failure matrix実装をcommitし、通常CIを通す。
+- [x] failure matrix実装をcommitし、通常CIを通す。
+- [x] behavior-preserving staging deployとschema 5 healthを通す。
+- [x] sequence 4が`delivered`、send attempts 1、totalがpending 0/enqueued 1/delivered 1の
+      ままであることを読み取り専用で確認する。
+- [x] smoke再実行、artifact publish、R2 write、remote failure injection、production変更を行わない。
+
+### P4e G4 policy linearization直前に行う
+
+- [ ] owner-only policy mutationとpublish競合の設計をADRで固定する。
+- [ ] internal RPCとlocal Workers runtime testを先に実装する。
+- [ ] HTTP route、schema migration、remote deploy、Queue/R2変更をこのincrementに含めない。
+- [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
 
 ### 必要になった時だけ行う
 
@@ -900,8 +911,12 @@ producer/consumerを追加するconfigはmanifestどおりlocal実装し、produ
 commit/通常CI後、bindingだけをstagingへdeployし、schema 5、sequence 4なし、outbox total 0を
 確認した。その証跡のcommit/通常CI後、account ownerがsequence 4の恒久追加効果を承認し、
 Queue smokeは1 send attemptで`delivered`へ収束した。ref、R2、members、productionは変更していない。
-次のfailure matrixはlocal-only harnessから始め、remote Queue停止やpoison messageは別途必要性と
-効果をreviewする。production secret、R2 S3 credential、custom domainはまだ作らない。
+failure matrixはlocal-only harness、通常CI、behavior-preserving staging deployまで完了し、
+sequence 4のdelivery stateも不変である。remote Queue停止やpoison messageは実行せず、
+実DLQ移送は観測済みと主張しない。P4dは完了したが、G4はpolicy mutationと
+concurrent publishのlinearizationが残る。次のP4eはlocal-onlyであり、userが準備する
+新しいCloudflare resourceやcredentialはない。production secret、R2 S3 credential、
+custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 
