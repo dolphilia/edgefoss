@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 10（P4c owner publish adapter staging deploy gate完了を反映）
+改訂: Revision 11（P4c remote canonical publish完了を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -630,8 +630,9 @@ operation dedupeを一つにしたschema 4 internal transactionをlocal実装し
 行わずschema 3から4へのmigrationとhealthを確認した。続いてowner認証付きbounded publish
 adapterとreview可能なdeterministic staging smokeをlocal実装した。次はこの変更のcommitと
 通常CIに成功し、schema 4のままmanual staging deployとstateful health、非認証401 probeを
-通過した。次はremote deploy証跡のcommit/通常CI後、恒久的なsynthetic staging project
-初期化効果をaccount ownerが明示確認してから一度だけpublish smokeを実行する。
+通過した。remote deploy証跡のcommit/通常CI後、account ownerが恒久的なsynthetic staging
+project初期化効果を明示承認し、publish smokeはsequence 1–3、public ref generation 1、
+exact retry収束、新規R2 writeなしで成功した。P4cは完了し、次はP4d recoveryをlocal設計する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -642,7 +643,7 @@ P4は一括実装しない。
 | P4a0 readiness | resource manifest/provision commandをlocalで完成し、U2を通過 |
 | P4a deployment | Worker、RepositoryDO、分離R2 bindingsがstagingで起動しhealth check可能 |
 | P4b upload | small blobのstaging→verify→finalizeと再送が安全 |
-| P4c publish | artifact acceptance、realm ref CAS、operation dedupeが一transaction |
+| P4c publish | 完了。artifact acceptance、realm ref CAS、operation dedupeが一transaction |
 | P4d recovery | outbox/alarm/Queue smokeとfailure matrixがgreen |
 
 stateful resource作成checkpoint U2:
@@ -788,6 +789,16 @@ Bearer challengeを返した。これはroute反映と認証境界の非破壊�
 publish operation、ref、R2 objectはまだ作成していない。Queue consumerも追加していない。
 次gateはこの証跡のcommit/通常CIと、account ownerによるsynthetic初期化効果の明示確認である。
 詳細は[`remote adapter deploy evidence`](../evidence/p4c-canonical-publish-adapter-remote-deploy-2026-08-25.md)を参照する。
+
+P4c remote canonical publish完了（2026-08-25）: remote deploy証跡のcommit/通常CI成功後、
+account ownerがsynthetic staging projectの恒久的な初期化効果を明示承認した。既存owner
+tokenをprocess環境からだけ渡したexact-origin smokeはexit 0となり、genesis、public tree、
+public changeをrepo sequence 1–3でacceptし、public `heads/main`をgeneration 1へ進めた。
+3 operationの各再送は保存済み結果へ一致して収束した。treeは既存P4b 30-byte public blobを
+参照し、新規R2 write、members state、production変更、Queue consumer追加はなかった。
+これによりP4cは完了した。G4はまだ未達であり、次はP4dでtransactional outbox、DO alarm、
+Queue/DLQ delivery、停止・復旧failure matrixをcanonical writeから分離してlocal実装する。
+詳細は[`remote publish evidence`](../evidence/p4c-canonical-publish-adapter-remote-2026-08-25.md)を参照する。
 
 成果物:
 

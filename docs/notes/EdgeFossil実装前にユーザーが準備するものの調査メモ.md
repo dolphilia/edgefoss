@@ -803,8 +803,8 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 - [x] publish adapterのcommit後に通常CI成功を確認する。
 - [x] manual staging deployとschema 4 stateful health成功を確認する。
-- [ ] synthetic staging projectの恒久的な初期化効果を確認する。
-- [ ] 案内後にpublish smokeを一度実行し、tokenをunsetする。
+- [x] synthetic staging projectの恒久的な初期化効果を確認する。
+- [x] 案内後にpublish smokeを一度実行し、tokenをunsetする。
 
 ### 必要になった時だけ行う
 
@@ -855,10 +855,11 @@ repositoryへ保存してはいけないもの:
 
 2026-08-25時点でNode.js 24、account安全確認、Wrangler OAuth、workers.dev、R2、
 staging resources、CI deploy token、staging owner secret、schema 4 migrationまでは完了した。
-次に新しく準備するCloudflare resourceやcredentialはない。publish adapterのcommit/通常CI、
-manual staging deploy、schema 4 healthの順に確認した後、既存owner tokenを一時的な環境変数
-として一度だけsynthetic publish smokeへ渡す。production secret、R2 S3 credential、
-custom domainはまだ作らない。
+publish adapterのdeployとsynthetic remote publishも完了した。次のP4d local実装中に新しく
+準備するCloudflare resourceやcredentialはない。既にprovision済みのQueue/DLQへconsumerを
+追加する段階では、event contract、failure injection、dry-run、commit/通常CIを先に通し、
+remote有効化前に改めて効果を案内する。production secret、R2 S3 credential、custom domainは
+まだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 
