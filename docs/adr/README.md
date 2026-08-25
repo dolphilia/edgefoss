@@ -42,5 +42,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0036](0036-owner-policy-epoch-linearization-fence.md)                 | Linearize publish against a policy epoch fence      | Accepted for P4e                 |
 | [0037](0037-internal-public-sync-inventory-snapshot.md)                | Page an internal public sync snapshot               | Accepted for P5a0                |
 | [0038](0038-encrypted-anonymous-public-inventory-adapter.md)           | Encrypt cursors for anonymous public inventory      | Accepted for P5a1                |
+| [0039](0039-bounded-internal-public-artifact-transfer.md)              | Bound and verify public artifact transfer           | Accepted for P5a2a               |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

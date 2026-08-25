@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 24（P5a1 staging deploy完了とP5a2のlocal-first gateを反映）
+改訂: Revision 25（P5a2a bounded internal artifact transferを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -657,8 +657,10 @@ P5a0ではcloud surfaceを増やさず、anonymous public viewの`HELLO`とbound
 `INVENTORY`をinternal RPCとしてlocal実装した。full local gateとnamed staging/production
 dry-run、commit後の通常CIはgreenである。P5a1ではencrypted cursorとanonymous HTTP
 adapterを実装し、公開効果の明示承認後にstagingへdeployした。schema 5 healthとcredential-free
-`HELLO` auditは成功し、運用者はinventoryを呼んでいない。P5a1は完了し、次はP5a2の
-bounded transfer/importをremote surfaceなしのlocal incrementから開始する。
+`HELLO` auditは成功し、運用者はinventoryを呼んでいない。P5a1は完了した。P5a2aでは
+remote surfaceを増やさず、snapshotにbindしたbounded public artifact/signature transferを
+internal RPCとしてlocal実装した。full local gateと両named dry-runはgreenであり、次gateは
+commitと通常CIである。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -978,7 +980,7 @@ P5aはさらに小さく分割する。
 |---|---|
 | P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
 | P5a1 external read adapter | 完了。commit `58c8c3a`をstagingへdeployし、schema 5 healthとanonymous HELLOがgreen |
-| P5a2 transfer/import | 未着手。public artifact body transfer、fresh local import、resume |
+| P5a2 transfer/import | P5a2a local artifact transferを実装。bundle closure/importは未実装 |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
 anonymous public viewだけのprotocol 0 `HELLO`とpaged `INVENTORY`をinternal RPCとして固定した。
@@ -1018,6 +1020,24 @@ P5a2の最初のgateは、public artifact bodyの完全性検証、bounded trans
 incrementではHTTP route、schema migration、binding、credential、remote R2/Queue write、
 staging/production deployを追加しない。local gateと通常CIの後にのみ、外部adapterの公開効果を
 別途レビューする。
+
+P5a2はさらに次の順で分割する。
+
+| increment | 完了状態 |
+|---|---|
+| P5a2a internal artifact transfer | local実装/full gate完了。commit/通常CI待ち |
+| P5a2b bundle closure/import | 未着手。public ref、reachable graph、blob、manifest、fresh atomic import |
+| P5a2c external transfer adapter | 未着手。opaque token、HTTP、disconnect resume、staging gate |
+
+P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
+空のinternal snapshot anchorと、sorted/uniqueなbounded WANTを受けるRepositoryDO RPCを追加した。
+artifact bodyはIDを再計算し、保存済みactor/signatureからcanonical signature recordを再構築して
+Web Cryptoで検証してから返す。members、snapshot後、存在しないIDは同じ`artifact_unavailable`に
+畳み、同一snapshotへの再送はbyte-identicalである。現在のHTTP `HELLO`はTRANSFERを広告せず、
+schema 5、binding、R2/Queue、staging/productionは不変である。詳細は
+[`P5a2a local evidence`](../evidence/p5a2a-public-artifact-transfer-local-2026-08-25.md)を参照する。
+full local gateとnamed staging/production dry-runはgreenである。P5a2bへ進むgateはこのincrementの
+commitと通常CI成功である。
 
 API原則:
 

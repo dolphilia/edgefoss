@@ -33,6 +33,14 @@ import {
   type SyncHelloInput,
   type SyncHelloResult,
 } from "./sync-inventory.js";
+import {
+  beginPublicTransfer,
+  readPublicArtifactTransfer,
+  type BeginPublicTransferInput,
+  type BeginPublicTransferResult,
+  type PublicArtifactTransferInput,
+  type PublicArtifactTransferResult,
+} from "./sync-transfer.js";
 
 export type {
   PublishArtifactInput,
@@ -54,6 +62,13 @@ export type {
   SyncHelloInput,
   SyncHelloResult,
 } from "./sync-inventory.js";
+export type {
+  BeginPublicTransferInput,
+  BeginPublicTransferResult,
+  PublicArtifactTransferInput,
+  PublicArtifactTransferItemV0,
+  PublicArtifactTransferResult,
+} from "./sync-transfer.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -709,6 +724,20 @@ export class RepositoryDO extends DurableObject<Env> {
             ),
       status: "ok",
     };
+  }
+
+  beginPublicTransfer(
+    input: BeginPublicTransferInput,
+  ): BeginPublicTransferResult {
+    return this.ctx.storage.transactionSync(() =>
+      beginPublicTransfer(this.ctx.storage.sql, input),
+    );
+  }
+
+  async publicArtifactTransfer(
+    input: PublicArtifactTransferInput,
+  ): Promise<PublicArtifactTransferResult> {
+    return readPublicArtifactTransfer(this.ctx.storage.sql, input);
   }
 
   #commitPublishedArtifact(

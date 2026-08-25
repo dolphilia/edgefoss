@@ -339,7 +339,8 @@ function validAnchor(anchor: PublicInventoryAnchorV0): boolean {
   return (
     anchor !== null &&
     typeof anchor === "object" &&
-    /^sha256:[0-9a-f]{64}$/.test(anchor.afterArtifactId) &&
+    (anchor.afterArtifactId === "" ||
+      /^sha256:[0-9a-f]{64}$/.test(anchor.afterArtifactId)) &&
     Number.isSafeInteger(anchor.policyEpoch) &&
     anchor.policyEpoch >= 0 &&
     anchor.principalId === "anonymous" &&

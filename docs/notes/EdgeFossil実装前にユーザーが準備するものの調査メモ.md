@@ -883,6 +883,19 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 このcheckpointで新しいCloudflare resource、secret、credentialは作成しない。
 
+### P5a2a internal public artifact transferで行う
+
+- [x] snapshotにbindしたbounded WANT/TRANSFER契約をADRで固定する。
+- [x] members、snapshot後、存在しないartifactを同じ結果へ畳む。
+- [x] artifact ID再計算とcanonical signature検証をtransfer前に行う。
+- [x] exact retryがbyte-identicalになることをlocal Workers runtimeで検証する。
+- [x] HTTP route、HELLO capability、schema、binding、R2/Queue、remoteを変更しない。
+- [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
+- [ ] P5a2a実装をcommitし、通常CIを通す。
+
+P5a2aはartifactと署名だけを扱い、blob、ref、manifest、fresh local importはP5a2bへ分ける。
+このcheckpointでユーザーがCloudflare上で行う作業はない。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。
@@ -947,7 +960,9 @@ public inventory内部契約もcommit/通常CIまで完了した。P5a1のencryp
 read adapterは公開効果の明示承認、commit `58c8c3a`の通常CI、manual staging deploy、schema 5
 health、credential-free `HELLO`まで成功した。運用者はinventoryを呼ばず、Queue/R2 configと
 productionは変更していない。P5a1は完了した。P5a2はまずlocal-onlyのtransfer/import契約から
-始めるため、現時点で新しいCloudflare resourceやcredentialは不要である。production secret、
+始め、P5a2aのbounded artifact/signature transferをinternal RPCとして実装した。HTTP route、
+schema、binding、R2/Queue、remoteは変更していないため、現時点で新しいCloudflare resourceや
+credentialは不要である。production secret、
 R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
