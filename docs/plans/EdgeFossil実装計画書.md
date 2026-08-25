@@ -696,6 +696,15 @@ account ownerへ`Edit Cloudflare Workers`を一accountへ限定したtokenと二
 Actions secret設定を依頼する。詳細は[`ADR 0027`](../adr/0027-manual-main-only-staging-ci-deploy.md)と
 [`U3 readiness evidence`](../evidence/u3-ci-deploy-workflow-local-2026-08-25.md)を参照する。
 
+U3初回実行状況（2026-08-25）: account限定tokenと二つのGitHub Actions secretを
+設定後、credential guard、全check、dry-run、staging deployまでは成功した。直後の
+最初の`GET /health`だけがHTTP 500になったが、その後の独立した公開GETと同じ監査は
+exact contractで成功したため、permissionやDO lifecycleを変更せず、CLI監査に最大6回・
+5秒間隔のbounded retryを加える。永続的なtransport/status/header/body/schema異常は
+引き続き失敗する。この改善のcommit/通常CI成功後、`main`からmanual deployを再実行し、
+deployとhealthがともにgreenになって初めてU3完了とする。詳細は
+[`U3 first CI deploy transient health evidence`](../evidence/u3-first-ci-deploy-transient-health-2026-08-25.md)を参照する。
+
 成果物:
 
 - staging/productionのresource名、binding、jurisdictionを一つに定義するresource manifest

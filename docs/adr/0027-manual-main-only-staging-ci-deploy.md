@@ -45,6 +45,12 @@ redirects, reads at most 4096 response bytes, and requires the
 exact staging Single Edition/SQLite/R2 contract for GET plus a bodyless HEAD.
 It never receives the Cloudflare credentials.
 
+The command-line audit makes at most six complete attempts with a fixed
+five-second delay between attempts. This bounded retry absorbs a transient
+post-deploy Worker or Durable Object startup failure while preserving the exact
+GET/HEAD contract on every attempt. A persistent transport, status, header,
+body, or schema failure remains fatal after the retry budget.
+
 ## Alternatives considered
 
 - Deploy automatically on every `main` push. Rejected until later release gates

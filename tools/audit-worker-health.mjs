@@ -19,6 +19,11 @@ const EXPECTED_BODY = {
   status: "ok",
 };
 
+const DEFAULT_RETRY_OPTIONS = {
+  attempts: 6,
+  delayMilliseconds: 5_000,
+};
+
 function fail(message) {
   throw new Error(`Worker health audit failed: ${message}`);
 }
@@ -140,9 +145,43 @@ export async function auditWorkerHealth(origin, fetchImplementation = fetch) {
   };
 }
 
+export async function auditWorkerHealthWithRetry(
+  origin,
+  fetchImplementation = fetch,
+  {
+    attempts = DEFAULT_RETRY_OPTIONS.attempts,
+    delayMilliseconds = DEFAULT_RETRY_OPTIONS.delayMilliseconds,
+    reportRetry = (message) => console.warn(message),
+    sleep = (milliseconds) =>
+      new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    fail("retry attempts must be a positive integer");
+  }
+  if (!Number.isInteger(delayMilliseconds) || delayMilliseconds < 0) {
+    fail("retry delay must be a non-negative integer");
+  }
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await auditWorkerHealth(origin, fetchImplementation);
+    } catch (error) {
+      if (attempt === attempts) throw error;
+
+      reportRetry(
+        `Worker health audit attempt ${attempt}/${attempts} failed; retrying in ${delayMilliseconds}ms`,
+      );
+      await sleep(delayMilliseconds);
+    }
+  }
+
+  throw new Error("Worker health audit retry loop ended unexpectedly.");
+}
+
 async function main() {
   const origin = parseArguments(process.argv.slice(2));
-  const result = await auditWorkerHealth(origin);
+  const result = await auditWorkerHealthWithRetry(origin);
   console.log(
     `Worker health audit passed; environment=${result.environment}, edition=${result.edition}, schema_version=${result.schemaVersion}`,
   );
