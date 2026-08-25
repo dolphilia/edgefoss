@@ -67,6 +67,7 @@ There is no HTTP route, schema migration, binding, secret, Cloudflare resource,
 remote Worker version, Queue message, R2 operation, or production change. No
 user Cloudflare action is required.
 
-After the full local gate and ordinary CI, the next P5a increment should define
-the external opaque cursor envelope and anonymous read adapter before adding
-artifact-body transfer or local import.
+Commit `2d088fc` and its ordinary GitHub Actions run were confirmed successful
+by the account owner. P5a0 is complete. P5a1 defines the external opaque cursor
+envelope and anonymous read adapter before artifact-body transfer or local
+import.

@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 21（G4完了とP5a0 public inventory内部契約を反映）
+改訂: Revision 22（P5a1 encrypted public inventory adapterを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -973,8 +973,8 @@ P5aはさらに小さく分割する。
 
 | increment | 完了状態 |
 |---|---|
-| P5a0 internal public inventory | local実装完了。commit/通常CI待ち |
-| P5a1 external read adapter | opaque cursor envelope、anonymous HTTP read、adapter tests |
+| P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
+| P5a1 external read adapter | local実装完了。commit/通常CIとremote公開効果承認待ち |
 | P5a2 transfer/import | public artifact body transfer、fresh local import、resume |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
@@ -986,6 +986,18 @@ staging/production設定は不変である。focused testとfull local gateはgr
 [`P5a0 local evidence`](../evidence/p5a0-public-sync-inventory-local-2026-08-25.md)を参照する。
 外部opaque token、HTTP adapter、`TRANSFER`、local importは未実装であり、P5a clone/pull完了とは
 主張しない。
+
+P5a1 local実行状況（2026-08-25）: [`ADR 0038`](../adr/0038-encrypted-anonymous-public-inventory-adapter.md)で
+anonymous `GET /api/v0/sync/hello`と`GET /api/v0/inventory`を固定した。内部anchorは
+RepositoryDOだけが保持するrandom 256-bit keyでAES-GCM暗号化・認証し、600秒で失効する。
+keyはcontinuationが初めて必要になった時だけ既存metaへ1行保存し、新しいCloudflare secretを
+要求しない。queryはallowlist、重複拒否、1–1,000件boundを持つ。schema 5、binding、Queue/R2、
+productionは不変である。focused test、full local gate、両named dry-runはgreenで、詳細は
+[`P5a1 local evidence`](../evidence/p5a1-public-sync-adapter-local-2026-08-25.md)を参照する。
+
+remote staging deployは、既存public artifactのIDとkindが匿名列挙可能になる公開効果である。
+commit/通常CI後も自動では進めず、account ownerがこの公開効果と最初のpaged requestによる
+cursor key meta 1行の生成可能性を承認してから行う。`TRANSFER`とlocal importはまだ未実装である。
 
 API原則:
 

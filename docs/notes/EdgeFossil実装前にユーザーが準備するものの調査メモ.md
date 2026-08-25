@@ -864,7 +864,21 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] HTTP route、schema migration、remote deploy、Queue/R2変更を含めない。
 - [x] 外部opaque cursor、artifact transfer、local importは別incrementとする。
 - [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
-- [ ] P5a0実装をcommitし、通常CIを通す。
+- [x] P5a0実装をcommitし、通常CIを通す。
+
+### P5a1 anonymous public read adapterで行う
+
+- [x] 外部cursorを暗号化・認証し、内部anchorを直接serializeしない。
+- [x] cursor keyはRepositoryDO内部で遅延生成し、新しいuser-managed secretを要求しない。
+- [x] local testではHTTP route、暗号、漏えい、改ざん、失効を検証する。
+- [x] schema migration、binding、Queue/R2、remote変更をlocal incrementに含めない。
+- [ ] P5a1実装をcommitし、通常CIを通す。
+- [ ] stagingのpublic artifact IDとkindが匿名列挙可能になる効果をaccount ownerが明示承認する。
+- [ ] 最初のpaged inventoryでrandom cursor key meta 1行が作られ得ることを明示承認する。
+- [ ] 承認後だけmanual staging deploy、schema 5 health、anonymous `HELLO`を確認する。
+- [ ] `HELLO`確認まではinventoryを呼ばず、cursor key生成やartifact列挙を行わない。
+
+このcheckpointで新しいCloudflare resource、secret、credentialは作成しない。
 
 ### 必要になった時だけ行う
 
@@ -925,9 +939,11 @@ Queue smokeは1 send attemptで`delivered`へ収束した。ref、R2、members�
 failure matrixはlocal-only harness、通常CI、behavior-preserving staging deployまで完了し、
 sequence 4のdelivery stateも不変である。remote Queue停止やpoison messageは実行せず、
 実DLQ移送は観測済みと主張しない。P4dは完了し、P4eのpolicy mutationと
-concurrent publishのlinearizationもlocal実装とfull gateまで完了した。残るgateはcommit/通常CIである。
-P4eはlocal-onlyであり、userが準備する新しいCloudflare resourceやcredentialはない。
-production secret、R2 S3 credential、custom domainはまだ作らない。
+concurrent publishのlinearizationもcommit/通常CIまで完了してG4はgoとなった。P5a0の
+public inventory内部契約もcommit/通常CIまで完了した。P5a1のencrypted cursorとanonymous
+read adapterはlocal実装とfull gateまで完了し、残るgateはcommit/通常CIとstaging公開効果の
+明示承認である。新しいCloudflare resourceやcredentialは不要である。production secret、
+R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 

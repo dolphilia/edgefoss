@@ -159,7 +159,12 @@ describe("RepositoryDO public sync inventory", () => {
       }),
     ).resolves.toEqual({
       capabilities: {
-        inventory: { maxPageItems: 1_000, ordering: "artifact_id_asc" },
+        inventory: {
+          cursor: "opaque",
+          cursorTtlSeconds: 600,
+          maxPageItems: 1_000,
+          ordering: "artifact_id_asc",
+        },
         phases: ["HELLO", "INVENTORY"],
       },
       principalId: "anonymous",
@@ -295,18 +300,21 @@ describe("RepositoryDO public sync inventory", () => {
         projectId: `sha256:${"f".repeat(64)}`,
       }),
     ).resolves.toEqual({ code: "cursor_invalid", status: "rejected" });
+    const principalTampered = inventoryInput(
+      projectId,
+      { ...page.nextAnchor },
+      1,
+    );
+    Reflect.set(principalTampered.anchor ?? {}, "principalId", "owner");
     await expect(
-      repository.publicInventory({
-        ...inventoryInput(projectId, page.nextAnchor, 1),
-        anchor: { ...page.nextAnchor, principalId: "owner" },
-      } as unknown as PublicInventoryInput),
+      repository.publicInventory(principalTampered),
     ).resolves.toEqual({ code: "request_invalid", status: "rejected" });
-    await expect(
-      repository.publicInventory({
-        ...inventoryInput(projectId, page.nextAnchor, 1),
-        anchor: { ...page.nextAnchor, view: "members" },
-      } as unknown as PublicInventoryInput),
-    ).resolves.toEqual({ code: "request_invalid", status: "rejected" });
+    const viewTampered = inventoryInput(projectId, { ...page.nextAnchor }, 1);
+    Reflect.set(viewTampered.anchor ?? {}, "view", "members");
+    await expect(repository.publicInventory(viewTampered)).resolves.toEqual({
+      code: "request_invalid",
+      status: "rejected",
+    });
 
     await expect(
       repository.advancePolicyEpoch({

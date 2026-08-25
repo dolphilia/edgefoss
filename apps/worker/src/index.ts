@@ -23,8 +23,12 @@ import {
 import { consumeAuthorityEventMessage } from "./queue-consumer.js";
 import {
   negotiatePublicSync,
+  openPublicInventoryCursor,
   readPublicInventory,
+  sealPublicInventoryCursor,
   type PublicInventoryInput,
+  type PublicInventoryPageInput,
+  type PublicInventoryPageResult,
   type PublicInventoryResult,
   type SyncHelloInput,
   type SyncHelloResult,
@@ -44,6 +48,8 @@ export type {
   PublicInventoryAnchorV0,
   PublicInventoryInput,
   PublicInventoryItemV0,
+  PublicInventoryPageInput,
+  PublicInventoryPageResult,
   PublicInventoryResult,
   SyncHelloInput,
   SyncHelloResult,
@@ -671,6 +677,38 @@ export class RepositoryDO extends DurableObject<Env> {
     return this.ctx.storage.transactionSync(() =>
       readPublicInventory(this.ctx.storage.sql, input),
     );
+  }
+
+  async publicInventoryPage(
+    input: PublicInventoryPageInput,
+  ): Promise<PublicInventoryPageResult> {
+    const opened =
+      input.cursor === null
+        ? null
+        : await openPublicInventoryCursor(this.ctx.storage.sql, input.cursor);
+    if (opened !== null && opened.status === "rejected") return opened;
+    const result = this.ctx.storage.transactionSync(() =>
+      readPublicInventory(this.ctx.storage.sql, {
+        anchor: opened?.anchor ?? null,
+        limit: input.limit,
+        principalId: input.principalId,
+        projectId: input.projectId,
+        protocolVersion: input.protocolVersion,
+        view: input.view,
+      }),
+    );
+    if (result.status === "rejected") return result;
+    return {
+      items: result.items,
+      nextCursor:
+        result.nextAnchor === null
+          ? null
+          : await sealPublicInventoryCursor(
+              this.ctx.storage.sql,
+              result.nextAnchor,
+            ),
+      status: "ok",
+    };
   }
 
   #commitPublishedArtifact(
@@ -1959,6 +1997,128 @@ async function handleOutboxApi(
   });
 }
 
+async function handleSyncHelloApi(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  if (request.method !== "GET") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "GET",
+    });
+  }
+  if (
+    !hasExactQueryParameters(url.searchParams, ["protocol", "view"]) ||
+    url.searchParams.get("protocol") !== "0" ||
+    url.searchParams.get("view") !== "public"
+  ) {
+    return errorResponse(
+      "sync_hello_invalid",
+      "The sync negotiation request is invalid.",
+      400,
+    );
+  }
+  const result = await repositoryStub(env).syncHello({
+    offeredProtocolVersions: [0],
+    principalId: "anonymous",
+    requestedView: "public",
+  });
+  if (result.status === "rejected") {
+    return errorResponse(
+      result.code,
+      "The public sync view is unavailable.",
+      result.code === "project_not_initialized" ? 409 : 400,
+    );
+  }
+  return jsonResponse({ hello: result });
+}
+
+async function handlePublicInventoryApi(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  if (request.method !== "GET") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "GET",
+    });
+  }
+  const allowedParameters = ["cursor", "limit", "project", "protocol", "view"];
+  const requiredParameters = ["limit", "project", "protocol", "view"];
+  if (
+    !hasAllowedQueryParameters(
+      url.searchParams,
+      allowedParameters,
+      requiredParameters,
+    )
+  ) {
+    return errorResponse(
+      "inventory_request_invalid",
+      "The inventory request is invalid.",
+      400,
+    );
+  }
+  const projectId = url.searchParams.get("project") ?? "";
+  const limitText = url.searchParams.get("limit") ?? "";
+  const cursor = url.searchParams.get("cursor");
+  if (
+    !/^sha256:[0-9a-f]{64}$/u.test(projectId) ||
+    !/^[1-9][0-9]{0,3}$/u.test(limitText) ||
+    url.searchParams.get("protocol") !== "0" ||
+    url.searchParams.get("view") !== "public" ||
+    cursor === ""
+  ) {
+    return errorResponse(
+      "inventory_request_invalid",
+      "The inventory request is invalid.",
+      400,
+    );
+  }
+  const result = await repositoryStub(env).publicInventoryPage({
+    cursor,
+    limit: Number(limitText),
+    principalId: "anonymous",
+    projectId,
+    protocolVersion: 0,
+    view: "public",
+  });
+  if (result.status === "rejected") {
+    const conflict =
+      result.code === "cursor_expired" ||
+      result.code === "cursor_stale" ||
+      result.code === "project_not_initialized";
+    return errorResponse(
+      result.code,
+      result.code.startsWith("cursor_")
+        ? "The inventory cursor cannot be used."
+        : "The inventory request is invalid.",
+      conflict ? 409 : 400,
+    );
+  }
+  return jsonResponse({ inventory: result });
+}
+
+function hasExactQueryParameters(
+  parameters: URLSearchParams,
+  expected: readonly string[],
+): boolean {
+  return hasAllowedQueryParameters(parameters, expected, expected);
+}
+
+function hasAllowedQueryParameters(
+  parameters: URLSearchParams,
+  allowed: readonly string[],
+  required: readonly string[],
+): boolean {
+  const keys = [...parameters.keys()];
+  const allowedSet = new Set(allowed);
+  return (
+    keys.every((key) => allowedSet.has(key)) &&
+    allowed.every((key) => parameters.getAll(key).length <= 1) &&
+    required.every((key) => parameters.getAll(key).length === 1)
+  );
+}
+
 async function readOutboxMatchDeclaration(request: Request): Promise<string> {
   if (
     request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
@@ -2086,6 +2246,22 @@ export default {
     if (url.pathname.startsWith("/api/v0/outbox")) {
       try {
         return await handleOutboxApi(request, env, url.pathname);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname === "/api/v0/sync/hello") {
+      try {
+        return await handleSyncHelloApi(request, env, url);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname === "/api/v0/inventory") {
+      try {
+        return await handlePublicInventoryApi(request, env, url);
       } catch (error) {
         return mapRequestError(error, url.pathname);
       }
