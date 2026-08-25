@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 19（P4d完了とG4 policy linearization残件を反映）
+改訂: Revision 20（P4e policy-epoch linearizationのlocal実装を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -651,6 +651,10 @@ duplicate、out-of-order、mixed valid/invalid batch、attempt 1–4 retry、log
 remote poison messageは使用せず、実DLQ移送は観測済みと主張しない。P4dは完了した。
 G4はACL revokeとconcurrent publishのauthority orderが未実装のためまだno-goであり、
 次はcloud surfaceを増やさないP4e policy linearizationをlocalで実装する。
+P4eでは既存schema 5の`policy_epoch`とnamespaced meta operationを使うinternal RPCを追加し、
+100回再送、cross-kind operation ID衝突、stale result保持、publish競合、既存canonical stateの
+非破壊性をWorkers runtimeで証明した。HTTP route、migration、binding、remote変更はない。
+次gateはcommitと通常CIである。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -663,7 +667,7 @@ P4は一括実装しない。
 | P4b upload | small blobのstaging→verify→finalizeと再送が安全 |
 | P4c publish | 完了。artifact acceptance、realm ref CAS、operation dedupeが一transaction |
 | P4d recovery | 完了。outbox/alarm/Queue smokeとbounded failure matrixがgreen |
-| P4e G4 policy closure | owner-only policy epoch mutationとconcurrent publishをauthority orderへlinearize |
+| P4e G4 policy closure | local実装完了。commit/通常CI待ち |
 
 stateful resource作成checkpoint U2:
 
@@ -932,6 +936,17 @@ G4はno-goである。P5には進まず、P4eで次をlocalで証明する。
 - policy mutation前に受理済みのcanonical artifactを後から破壊しない。
 - 最初はinternal RPCとWorkers runtime testのみとし、HTTP route、schema migration、remote deploy、
   Queue/R2変更、新しいcredentialを追加しない。
+
+P4e local実行状況（2026-08-25）: [`ADR 0036`](../adr/0036-owner-policy-epoch-linearization-fence.md)で
+full member ACLとrevocation-class ordering fenceを分離した。`advancePolicyEpoch()`はproject初期化後だけ、
+expected epochを一つ進め、exact retryは保存済み結果へ収束する。upload/publish/policyは
+同じoperation ID namespaceを共有する。publishとfenceの並行RPCは、publishがepoch 0で受理されてから
+fenceがepoch 1へ進むか、fenceが先に進んでpublishがstable `policy_conflict`になるかの
+どちらかに限定される。既存artifact/receipt/outboxは破壊されない。schema 5、HTTP surface、
+Queue/R2、staging/production設定は不変である。full local gateはgreenで、詳細は
+[`P4e local evidence`](../evidence/p4e-policy-epoch-linearization-local-2026-08-25.md)を参照する。
+G4はこの変更のcommit/通常CI成功までno-goを維持する。full member ACLと具体的なmember
+credential revokeはP6の範囲であり、P4eで実行済みとは主張しない。
 
 ### P5: sync v0（6–9 person-weeks）
 

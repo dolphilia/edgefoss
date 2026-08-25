@@ -91,6 +91,26 @@ export interface AcceptedPublishResult {
   status: "accepted";
 }
 
+export interface AdvancePolicyEpochInput {
+  expectedPolicyEpoch: number;
+  operationId: string;
+  principalId: string;
+}
+
+export type AdvancePolicyEpochResult =
+  | {
+      newPolicyEpoch: number;
+      previousPolicyEpoch: number;
+      status: "accepted";
+    }
+  | { code: "operation_conflict"; status: "conflict" }
+  | { code: "project_not_initialized"; status: "rejected" }
+  | {
+      code: "policy_conflict";
+      currentPolicyEpoch: number;
+      status: "policy_conflict";
+    };
+
 export type PublishRejectionCode =
   | "artifact_blob_missing"
   | "artifact_actor_unauthorized"
@@ -169,6 +189,12 @@ interface OperationRow extends Record<string, SqlStorageValue> {
 interface RefRow extends Record<string, SqlStorageValue> {
   artifact_id: string;
   generation: number;
+}
+
+interface StoredPolicyOperation {
+  expectedPolicyEpoch: number;
+  principalId: string;
+  result: AdvancePolicyEpochResult;
 }
 
 export interface RepositoryHealth {
@@ -386,6 +412,9 @@ export class RepositoryDO extends DurableObject<Env> {
     if (publishOperation) {
       return { code: "operation_conflict", status: "conflict" };
     }
+    if (this.#readPolicyOperation(input.operationId) !== undefined) {
+      return { code: "operation_conflict", status: "conflict" };
+    }
 
     const existing = this.ctx.storage.sql
       .exec<UploadRow>(
@@ -561,6 +590,63 @@ export class RepositoryDO extends DurableObject<Env> {
     }
   }
 
+  advancePolicyEpoch(input: AdvancePolicyEpochInput): AdvancePolicyEpochResult {
+    validateAdvancePolicyEpoch(input);
+
+    return this.ctx.storage.transactionSync(() => {
+      const stored = this.#readPolicyOperation(input.operationId);
+      if (stored !== undefined) {
+        if (
+          stored.principalId !== input.principalId ||
+          stored.expectedPolicyEpoch !== input.expectedPolicyEpoch
+        ) {
+          return { code: "operation_conflict", status: "conflict" };
+        }
+        return stored.result;
+      }
+
+      const uploadOperation = this.ctx.storage.sql
+        .exec<{ operation_id: string }>(
+          "SELECT operation_id FROM upload_sessions WHERE operation_id = ?",
+          input.operationId,
+        )
+        .toArray()[0];
+      const publishOperation = this.ctx.storage.sql
+        .exec<{ operation_id: string }>(
+          "SELECT operation_id FROM operations WHERE operation_id = ?",
+          input.operationId,
+        )
+        .toArray()[0];
+      if (uploadOperation || publishOperation) {
+        return { code: "operation_conflict", status: "conflict" };
+      }
+
+      if (this.#metaValue("project_id") === "") {
+        return { code: "project_not_initialized", status: "rejected" };
+      }
+
+      const currentPolicyEpoch = this.#metaInteger("policy_epoch");
+      if (input.expectedPolicyEpoch !== currentPolicyEpoch) {
+        return this.#storePolicyOperation(input, {
+          code: "policy_conflict",
+          currentPolicyEpoch,
+          status: "policy_conflict",
+        });
+      }
+      if (currentPolicyEpoch === Number.MAX_SAFE_INTEGER) {
+        throw new Error("policy_epoch_exhausted");
+      }
+
+      const newPolicyEpoch = currentPolicyEpoch + 1;
+      this.#setMetaValue("policy_epoch", String(newPolicyEpoch));
+      return this.#storePolicyOperation(input, {
+        newPolicyEpoch,
+        previousPolicyEpoch: currentPolicyEpoch,
+        status: "accepted",
+      });
+    });
+  }
+
   #commitPublishedArtifact(
     prepared: PreparedPublishArtifact,
   ): PublishArtifactResult {
@@ -572,6 +658,9 @@ export class RepositoryDO extends DurableObject<Env> {
         )
         .toArray()[0];
       if (uploadOperation) {
+        return { code: "operation_conflict", status: "conflict" };
+      }
+      if (this.#readPolicyOperation(prepared.operationId) !== undefined) {
         return { code: "operation_conflict", status: "conflict" };
       }
 
@@ -929,6 +1018,32 @@ export class RepositoryDO extends DurableObject<Env> {
     return result;
   }
 
+  #readPolicyOperation(operationId: string): StoredPolicyOperation | undefined {
+    const row = this.ctx.storage.sql
+      .exec<{ value: string }>(
+        "SELECT value FROM edgefoss_meta WHERE key = ?",
+        policyOperationKey(operationId),
+      )
+      .toArray()[0];
+    return row ? parseStoredPolicyOperation(row.value) : undefined;
+  }
+
+  #storePolicyOperation(
+    input: AdvancePolicyEpochInput,
+    result: AdvancePolicyEpochResult,
+  ): AdvancePolicyEpochResult {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO edgefoss_meta (key, value) VALUES (?, ?)",
+      policyOperationKey(input.operationId),
+      JSON.stringify({
+        expectedPolicyEpoch: input.expectedPolicyEpoch,
+        principalId: input.principalId,
+        result,
+      } satisfies StoredPolicyOperation),
+    );
+    return result;
+  }
+
   #metaValue(key: string): string {
     return this.ctx.storage.sql
       .exec<{ value: string }>(
@@ -1100,6 +1215,100 @@ function validateBeginUpload(input: BeginUploadInput): void {
   ) {
     throw new Error("upload_size_invalid");
   }
+}
+
+function validateAdvancePolicyEpoch(input: AdvancePolicyEpochInput): void {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    !hasExactKeys(input, [
+      "expectedPolicyEpoch",
+      "operationId",
+      "principalId",
+    ]) ||
+    !Number.isSafeInteger(input.expectedPolicyEpoch) ||
+    input.expectedPolicyEpoch < 0
+  ) {
+    throw new Error("policy_mutation_invalid");
+  }
+  validatePrincipal(input.principalId);
+  validateUuid(input.operationId, "operation_id");
+}
+
+function policyOperationKey(operationId: string): string {
+  return `policy_operation:${operationId}`;
+}
+
+function parseStoredPolicyOperation(value: string): StoredPolicyOperation {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("policy_operation_result_corrupt");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("policy_operation_result_corrupt");
+  }
+  const operation = parsed as Record<string, unknown>;
+  if (
+    !hasExactKeys(operation, [
+      "expectedPolicyEpoch",
+      "principalId",
+      "result",
+    ]) ||
+    !Number.isSafeInteger(operation.expectedPolicyEpoch) ||
+    (operation.expectedPolicyEpoch as number) < 0 ||
+    operation.principalId !== OWNER_PRINCIPAL ||
+    !validStoredPolicyResult(operation.result)
+  ) {
+    throw new Error("policy_operation_result_corrupt");
+  }
+  return {
+    expectedPolicyEpoch: operation.expectedPolicyEpoch as number,
+    principalId: OWNER_PRINCIPAL,
+    result: operation.result,
+  };
+}
+
+function validStoredPolicyResult(
+  value: unknown,
+): value is AdvancePolicyEpochResult {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (result.status === "accepted") {
+    return (
+      hasExactKeys(result, [
+        "newPolicyEpoch",
+        "previousPolicyEpoch",
+        "status",
+      ]) &&
+      Number.isSafeInteger(result.previousPolicyEpoch) &&
+      (result.previousPolicyEpoch as number) >= 0 &&
+      Number.isSafeInteger(result.newPolicyEpoch) &&
+      result.newPolicyEpoch === (result.previousPolicyEpoch as number) + 1
+    );
+  }
+  if (result.status === "conflict") {
+    return (
+      hasExactKeys(result, ["code", "status"]) &&
+      result.code === "operation_conflict"
+    );
+  }
+  if (result.status === "rejected") {
+    return (
+      hasExactKeys(result, ["code", "status"]) &&
+      result.code === "project_not_initialized"
+    );
+  }
+  return (
+    result.status === "policy_conflict" &&
+    hasExactKeys(result, ["code", "currentPolicyEpoch", "status"]) &&
+    result.code === "policy_conflict" &&
+    Number.isSafeInteger(result.currentPolicyEpoch) &&
+    (result.currentPolicyEpoch as number) >= 0
+  );
 }
 
 function parseStoredPublishResult(value: string): PublishArtifactResult {
@@ -1401,10 +1610,7 @@ async function readUploadDeclaration(
   };
 }
 
-function hasExactKeys(
-  input: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
+function hasExactKeys(input: object, expected: readonly string[]): boolean {
   const actual = Object.keys(input).sort();
   const sortedExpected = [...expected].sort();
   return (

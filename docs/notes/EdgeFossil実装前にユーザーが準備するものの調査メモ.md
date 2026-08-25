@@ -850,10 +850,12 @@ Paidへ移る判断はP4/P5の実測後に行う。
 
 ### P4e G4 policy linearization直前に行う
 
-- [ ] owner-only policy mutationとpublish競合の設計をADRで固定する。
-- [ ] internal RPCとlocal Workers runtime testを先に実装する。
-- [ ] HTTP route、schema migration、remote deploy、Queue/R2変更をこのincrementに含めない。
+- [x] owner-only policy mutationとpublish競合の設計をADRで固定する。
+- [x] internal RPCとlocal Workers runtime testを先に実装する。
+- [x] HTTP route、schema migration、remote deploy、Queue/R2変更をこのincrementに含めない。
 - [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P4e実装をcommitし、通常CIを通す。
 
 ### 必要になった時だけ行う
 
@@ -913,10 +915,10 @@ commit/通常CI後、bindingだけをstagingへdeployし、schema 5、sequence 4
 Queue smokeは1 send attemptで`delivered`へ収束した。ref、R2、members、productionは変更していない。
 failure matrixはlocal-only harness、通常CI、behavior-preserving staging deployまで完了し、
 sequence 4のdelivery stateも不変である。remote Queue停止やpoison messageは実行せず、
-実DLQ移送は観測済みと主張しない。P4dは完了したが、G4はpolicy mutationと
-concurrent publishのlinearizationが残る。次のP4eはlocal-onlyであり、userが準備する
-新しいCloudflare resourceやcredentialはない。production secret、R2 S3 credential、
-custom domainはまだ作らない。
+実DLQ移送は観測済みと主張しない。P4dは完了し、P4eのpolicy mutationと
+concurrent publishのlinearizationもlocal実装とfull gateまで完了した。残るgateはcommit/通常CIである。
+P4eはlocal-onlyであり、userが準備する新しいCloudflare resourceやcredentialはない。
+production secret、R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。
 
