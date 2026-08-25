@@ -876,9 +876,9 @@ Paidへ移る判断はP4/P5の実測後に行う。
 - [x] stagingのpublic artifact IDとkindが匿名列挙可能になる効果をaccount ownerが明示承認する。
 - [x] 最初のpaged inventoryでrandom cursor key meta 1行が作られ得ることを明示承認する。
 - [x] `HELLO`だけを検証しinventoryを呼ばないpost-deploy audit commandを実装する。
-- [ ] audit commandと承認記録をcommitし、通常CIを通す。
-- [ ] 承認後だけmanual staging deploy、schema 5 health、anonymous `HELLO`を確認する。
-- [ ] 運用者自身は`HELLO`確認までinventoryを呼ばない。ただしdeploy直後から第三者が
+- [x] audit commandと承認記録をcommitし、通常CIを通す。
+- [x] 承認後だけmanual staging deploy、schema 5 health、anonymous `HELLO`を確認する。
+- [x] 運用者自身は`HELLO`確認までinventoryを呼ばない。ただしdeploy直後から第三者が
       anonymous inventoryを呼び、cursor keyを生成し得るため、key未生成は保証・合格条件にしない。
 
 このcheckpointで新しいCloudflare resource、secret、credentialは作成しない。
@@ -944,8 +944,10 @@ sequence 4のdelivery stateも不変である。remote Queue停止やpoison mess
 実DLQ移送は観測済みと主張しない。P4dは完了し、P4eのpolicy mutationと
 concurrent publishのlinearizationもcommit/通常CIまで完了してG4はgoとなった。P5a0の
 public inventory内部契約もcommit/通常CIまで完了した。P5a1のencrypted cursorとanonymous
-read adapterはlocal実装とfull gateまで完了し、残るgateはcommit/通常CIとstaging公開効果の
-明示承認である。新しいCloudflare resourceやcredentialは不要である。production secret、
+read adapterは公開効果の明示承認、commit `58c8c3a`の通常CI、manual staging deploy、schema 5
+health、credential-free `HELLO`まで成功した。運用者はinventoryを呼ばず、Queue/R2 configと
+productionは変更していない。P5a1は完了した。P5a2はまずlocal-onlyのtransfer/import契約から
+始めるため、現時点で新しいCloudflare resourceやcredentialは不要である。production secret、
 R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。

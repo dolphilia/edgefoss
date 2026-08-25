@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 23（P5a1 staging公開承認とHELLO-only auditを反映）
+改訂: Revision 24（P5a1 staging deploy完了とP5a2のlocal-first gateを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -655,7 +655,10 @@ P4eでは既存schema 5の`policy_epoch`とnamespaced meta operationを使うint
 非破壊性をWorkers runtimeで証明した。HTTP route、migration、binding、remote変更はない。
 P5a0ではcloud surfaceを増やさず、anonymous public viewの`HELLO`とbounded paged
 `INVENTORY`をinternal RPCとしてlocal実装した。full local gateとnamed staging/production
-dry-runはgreenであり、次gateはcommitと通常CIである。
+dry-run、commit後の通常CIはgreenである。P5a1ではencrypted cursorとanonymous HTTP
+adapterを実装し、公開効果の明示承認後にstagingへdeployした。schema 5 healthとcredential-free
+`HELLO` auditは成功し、運用者はinventoryを呼んでいない。P5a1は完了し、次はP5a2の
+bounded transfer/importをremote surfaceなしのlocal incrementから開始する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -974,8 +977,8 @@ P5aはさらに小さく分割する。
 | increment | 完了状態 |
 |---|---|
 | P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
-| P5a1 external read adapter | code CI/公開効果承認完了。HELLO audit commit/CI待ち |
-| P5a2 transfer/import | public artifact body transfer、fresh local import、resume |
+| P5a1 external read adapter | 完了。commit `58c8c3a`をstagingへdeployし、schema 5 healthとanonymous HELLOがgreen |
+| P5a2 transfer/import | 未着手。public artifact body transfer、fresh local import、resume |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
 anonymous public viewだけのprotocol 0 `HELLO`とpaged `INVENTORY`をinternal RPCとして固定した。
@@ -1002,9 +1005,19 @@ anonymous inventoryを呼べるため、運用者のprobe前にkeyが生成さ�
 `TRANSFER`とlocal importはまだ未実装である。
 
 account ownerはstagingでの匿名public ID/kind列挙とcursor key meta 1行の生成可能性を明示承認した。
-post-deploy検証にはcredentialを送らず`HELLO`を一度だけGETする`cloud:audit-public-sync`を使う。
-このcommandはinventoryを呼ばず、manual deploy workflowではstateful health成功後に実行する。
-次gateはこのauditと承認記録のcommit/通常CIであり、それまではdeployしない。
+`cloud:audit-public-sync`と承認記録を含むcommit `58c8c3a`は通常CI成功後にstagingへdeployされた。
+stateful healthはschema 5で成功し、credentialを送らない`HELLO`もprotocol 0、public view、opaque
+cursor、TTL 600秒、最大1,000件として成功した。運用者はinventoryを呼ばず、Queue/R2 configと
+productionは不変である。第三者はdeploy直後からinventoryを呼べるため、cursor key未生成は
+保証しない。詳細は
+[`P5a1 remote deploy evidence`](../evidence/p5a1-public-sync-adapter-remote-deploy-2026-08-25.md)を
+参照する。P5a1は完了した。
+
+P5a2の最初のgateは、public artifact bodyの完全性検証、bounded transfer、fresh local import、
+中断再開の責任境界をADRで固定し、internal APIとlocal testだけで成立させることである。この
+incrementではHTTP route、schema migration、binding、credential、remote R2/Queue write、
+staging/production deployを追加しない。local gateと通常CIの後にのみ、外部adapterの公開効果を
+別途レビューする。
 
 API原則:
 
