@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 26（P5a2b1 public closureとR2 chunk transferを反映）
+改訂: Revision 27（P5a2b2 cross-runtime clone importを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -661,7 +661,9 @@ adapterを実装し、公開効果の明示承認後にstagingへdeployした。
 remote surfaceを増やさず、snapshotにbindしたbounded public artifact/signature transferを
 internal RPCとしてlocal実装し、commit `b55d365`と通常CIまで成功した。P5a2b1ではpublic head
 closure、canonical manifest、bounded R2 blob chunkをlocal実装し、full local gateとnamed
-staging/production dry-runはgreenである。次gateはcommitと通常CIである。
+staging/production dry-run、commit `bee3d69`、通常CIまでgreenである。P5a2b2では
+deterministicな署名付きWorker clone vectorとRust fresh import/identical re-exportをlocal実装し、
+full local gateとnamed staging/production dry-runはgreenである。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -981,7 +983,7 @@ P5aはさらに小さく分割する。
 |---|---|
 | P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
 | P5a1 external read adapter | 完了。commit `58c8c3a`をstagingへdeployし、schema 5 healthとanonymous HELLOがgreen |
-| P5a2 transfer/import | P5a2b1 local closure/blob/manifestを実装。cross-runtime importは未実装 |
+| P5a2 transfer/import | P5a2b1完了。P5a2b2 cross-runtime importをlocal実装 |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
 anonymous public viewだけのprotocol 0 `HELLO`とpaged `INVENTORY`をinternal RPCとして固定した。
@@ -1027,8 +1029,8 @@ P5a2はさらに次の順で分割する。
 | increment | 完了状態 |
 |---|---|
 | P5a2a internal artifact transfer | 完了。commit `b55d365`と通常CI成功を確認 |
-| P5a2b1 closure/blob/manifest | local実装とfull gate完了。commit、通常CI待ち |
-| P5a2b2 cross-runtime import | 未着手。deterministic vector、fresh atomic import、identical re-export |
+| P5a2b1 closure/blob/manifest | 完了。commit `bee3d69`と通常CI成功を確認 |
+| P5a2b2 cross-runtime import | local実装とfull gate完了。commit、通常CI待ち |
 | P5a2c external transfer adapter | 未着手。opaque token、HTTP、disconnect resume、staging gate |
 
 P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
@@ -1048,8 +1050,22 @@ signatureを再検証し、semantic rootとcanonical bundle manifestを生成す
 dangling public upload、members、存在しないblobは同じ`blob_unavailable`であり、R2 keyは返さない。
 現在のHTTP/capability、schema 5、binding構成、remote stateは不変である。詳細は
 [`P5a2b1 local evidence`](../evidence/p5a2b1-public-clone-closure-local-2026-08-26.md)を参照する。
-次gateはcommitと通常CIである。その後P5a2b2でexact outputを共有vector化し、
-Rust fresh atomic importとidentical re-exportを直接証明する。
+full local gate、named dry-run、commit `bee3d69`、通常CIはgreenであり、P5a2b1は完了した。
+
+P5a2b2では[`ADR 0041`](../adr/0041-cross-runtime-public-clone-import-contract.md)に従い、
+RFC 8032の公開test keyと固定入力から署名付きpublic clone vectorを決定的に生成する。
+Worker testはRepositoryDOとlocal R2で実際にpublish/plan/transfer/chunkを通し、manifestと
+全object byteをvectorと照合する。Rust testは同じvectorをdeep verifyし、空のSQLiteへ
+importしてgeneration 1とbyte-identical re-exportを確認する。破損入力は空状態を残し、
+正常retryは成功する。既存の途中失敗注入testがtransactionの部分write rollbackを維持する。
+
+縦断testで検出したWorkers/Rust間のlogical clock差を解消するため、complete plannerは現在の
+Rust importerと同じsingle-actor、tree clock 0、zero-based contiguous linear changeを事前確認する。
+対応外のaccepted historyはdownload後ではなく`clone_profile_unsupported`で早期に拒否する。
+詳細は[`P5a2b2 local evidence`](../evidence/p5a2b2-cross-runtime-public-clone-local-2026-08-26.md)を
+参照する。full local gateとnamed staging/production dry-runはgreenである。次gateはcommitと
+通常CIである。
+その後P5a2cでopaque external grantとHTTP resume adapterを別の公開効果gateとして設計する。
 
 API原則:
 

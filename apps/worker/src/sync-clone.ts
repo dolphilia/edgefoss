@@ -2,6 +2,8 @@ import {
   artifactId,
   computeSemanticRoot,
   decodeChange,
+  decodeProjectGenesis,
+  decodeTree,
   encodeBundleManifest,
   encodeSignatureRecord,
   verifyArtifactSignature,
@@ -131,15 +133,14 @@ export async function planPublicClone(
   if (closure === "too_large") {
     return { code: "clone_plan_too_large", status: "rejected" };
   }
-  const changeCount = [...closure.artifacts.values()].filter(
-    (row) => row.kind === "change",
-  ).length;
-  const unsupported = [...closure.artifacts.values()].some(
-    (row) =>
-      row.kind === "change" &&
-      decodeChange(new Uint8Array(row.canonical_body)).parents.length > 1,
-  );
-  if (unsupported || ref.generation !== changeCount) {
+  if (
+    !supportsCompleteCloneProfile(
+      closure,
+      begun.snapshot.projectId,
+      ref.artifact_id,
+      ref.generation,
+    )
+  ) {
     return { code: "clone_profile_unsupported", status: "rejected" };
   }
 
@@ -215,6 +216,53 @@ export async function planPublicClone(
     },
     status: "ok",
   };
+}
+
+function supportsCompleteCloneProfile(
+  closure: Closure,
+  projectId: string,
+  headArtifactId: string,
+  generation: number,
+): boolean {
+  const genesisRow = closure.artifacts.get(projectId);
+  if (genesisRow?.kind !== "project.genesis" || generation < 1) return false;
+  const actorKey = decodeProjectGenesis(
+    new Uint8Array(genesisRow.canonical_body),
+  ).actorKey;
+  const rows = [...closure.artifacts.values()];
+  const changeCount = rows.filter((row) => row.kind === "change").length;
+  if (generation !== changeCount) return false;
+  for (const row of rows) {
+    if (row.kind !== "tree") continue;
+    const tree = decodeTree(new Uint8Array(row.canonical_body));
+    if (tree.logicalClock !== 0n || !sameBytes(tree.actorKey, actorKey)) {
+      return false;
+    }
+  }
+
+  const seen = new Set<string>();
+  let current = headArtifactId;
+  let expectedClock = BigInt(generation - 1);
+  while (true) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    const row = closure.artifacts.get(current);
+    if (row?.kind !== "change") return false;
+    const change = decodeChange(new Uint8Array(row.canonical_body));
+    if (
+      change.logicalClock !== expectedClock ||
+      !sameBytes(change.actorKey, actorKey) ||
+      change.parents.length > 1
+    ) {
+      return false;
+    }
+    if (change.parents.length === 0) {
+      return expectedClock === 0n && seen.size === changeCount;
+    }
+    if (expectedClock === 0n) return false;
+    current = change.parents[0]!;
+    expectedClock -= 1n;
+  }
 }
 
 export async function readPublicBlobChunk(
@@ -408,6 +456,13 @@ function formatSha256(digest: ArrayBuffer): string {
   return `sha256:${[...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")}`;
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return (
+    left.length === right.length &&
+    left.every((byte, index) => byte === right[index])
+  );
 }
 
 function copyBuffer(bytes: ArrayBuffer | Uint8Array): ArrayBuffer {

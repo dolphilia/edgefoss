@@ -156,7 +156,7 @@ describe("RepositoryDO public clone plan", () => {
           { mode: "file", name: "empty.bin", target: emptyBlobId },
           { mode: "file", name: "source.bin", target: blobId },
         ],
-        logicalClock: 1n,
+        logicalClock: 0n,
         parents: [],
         project: projectId,
         realm: "public",
@@ -172,7 +172,7 @@ describe("RepositoryDO public clone plan", () => {
       encodeChange({
         actorKey: identity.actorKey,
         createdAt: "2026-08-26T00:00:02Z",
-        logicalClock: 2n,
+        logicalClock: 0n,
         message: "clone fixture",
         parents: [],
         project: projectId,
@@ -335,7 +335,7 @@ describe("RepositoryDO public clone plan", () => {
         actorKey: identity.actorKey,
         createdAt: "2026-08-26T00:00:03Z",
         entries: [{ mode: "file", name: "stale.txt", target: blobId }],
-        logicalClock: 1n,
+        logicalClock: 0n,
         parents: [],
         project: projectId,
         realm: "public",
@@ -349,7 +349,7 @@ describe("RepositoryDO public clone plan", () => {
       encodeChange({
         actorKey: identity.actorKey,
         createdAt: "2026-08-26T00:00:04Z",
-        logicalClock: 2n,
+        logicalClock: 0n,
         message: "stale",
         parents: [],
         project: projectId,
@@ -379,6 +379,50 @@ describe("RepositoryDO public clone plan", () => {
     ).resolves.toEqual({
       code: "snapshot_stale",
       currentPolicyEpoch: 1,
+      status: "rejected",
+    });
+  });
+
+  it("rejects a complete profile that the Rust importer cannot reconstruct", async () => {
+    const repository = env.REPOSITORY.getByName("sync-clone-unsupported-clock");
+    const identity = await signingIdentity();
+    const projectId = await initializeProject(repository, identity);
+    const tree = await publishInput(
+      encodeTree({
+        actorKey: identity.actorKey,
+        createdAt: "2026-08-26T00:00:05Z",
+        entries: [],
+        logicalClock: 1n,
+        parents: [],
+        project: projectId,
+        realm: "public",
+      }),
+      identity,
+      "78000000-0000-4000-8000-000000000012",
+      null,
+    );
+    await repository.publishArtifact(tree);
+    const change = await publishInput(
+      encodeChange({
+        actorKey: identity.actorKey,
+        createdAt: "2026-08-26T00:00:06Z",
+        logicalClock: 1n,
+        message: "unsupported clock",
+        parents: [],
+        project: projectId,
+        realm: "public",
+        root: tree.artifactId,
+      }),
+      identity,
+      "78000000-0000-4000-8000-000000000013",
+      { expectedGeneration: 0, name: "heads/main" },
+    );
+    await repository.publishArtifact(change);
+
+    await expect(
+      repository.publicClonePlan(beginInput(projectId)),
+    ).resolves.toEqual({
+      code: "clone_profile_unsupported",
       status: "rejected",
     });
   });

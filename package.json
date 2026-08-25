@@ -33,7 +33,7 @@
     "test:ts": "pnpm --filter @edgefoss/protocol test && pnpm --filter @edgefoss/worker test",
     "typecheck": "pnpm --filter @edgefoss/protocol typecheck && pnpm --filter @edgefoss/worker typecheck",
     "types": "pnpm --filter @edgefoss/worker types",
-    "vectors:check": "node tools/audit-vectors.mjs && node tools/read-bundle-vector.mjs spec/vectors/bundle-v0.json",
+    "vectors:check": "node tools/audit-vectors.mjs && node tools/read-bundle-vector.mjs spec/vectors/bundle-v0.json && tsx tools/generate-public-clone-vector.ts --check",
     "rust:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings"
   },
   "devDependencies": {

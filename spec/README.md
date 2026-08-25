@@ -24,6 +24,11 @@ Machine-readable valid and invalid examples live in [`vectors/`](vectors/).
 Rust and TypeScript implementations MUST consume the same files rather than
 copying expected values into language-specific tests.
 
+[`vectors/public-clone-v0.json`](vectors/public-clone-v0.json) is an integration
+vector rather than a new wire schema. It captures the exact signed
+`edgefossil-bundle` output produced by the Workers complete-clone profile and
+consumed by the Rust SQLite importer.
+
 ## Compatibility rule
 
 An implementation advertises the exact profiles it accepts. A decoder MUST

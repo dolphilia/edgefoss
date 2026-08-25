@@ -44,5 +44,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0038](0038-encrypted-anonymous-public-inventory-adapter.md)           | Encrypt cursors for anonymous public inventory      | Accepted for P5a1                |
 | [0039](0039-bounded-internal-public-artifact-transfer.md)              | Bound and verify public artifact transfer           | Accepted for P5a2a               |
 | [0040](0040-bounded-public-clone-closure-and-blob-chunks.md)           | Plan public closure and resumable blob chunks       | Accepted for P5a2b1              |
+| [0041](0041-cross-runtime-public-clone-import-contract.md)             | Prove Worker clone import across runtimes           | Accepted for P5a2b2              |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

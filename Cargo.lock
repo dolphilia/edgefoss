@@ -186,6 +186,8 @@ dependencies = [
  "edgefoss-core",
  "ef-format",
  "rusqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

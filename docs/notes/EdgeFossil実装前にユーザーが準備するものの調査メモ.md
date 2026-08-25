@@ -907,10 +907,26 @@ P5a2aはartifactと署名だけを扱い、blob、ref、manifest、fresh local i
 - [x] HTTP、schema、binding、remote R2/Queue、productionを変更しない。
 - [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5a2b1実装をcommitし、通常CIを通す。
+- [x] P5a2b1実装をcommitし、通常CIを通す。
 
 P5a2b1のR2 readはlocal binding testだけであり、staging objectを読まない。fresh local importは
 P5a2b2でcross-runtime vectorとともに検証する。このcheckpointでユーザー作業はない。
+
+### P5a2b2 cross-runtime importで行う
+
+- [x] 固定の公開test keyと固定入力から署名付きclone vectorを決定的に生成する。
+- [x] Workerのplan、artifact/signature transfer、blob chunkがvectorの全byteと一致することを確認する。
+- [x] Rustで同じvectorをdeep verifyし、空SQLiteへimportして同一byteをre-exportする。
+- [x] 破損入力の拒否後も空状態とretry可能性を維持する。
+- [x] current Rust importer非対応のhistoryをWorker plannerが事前拒否する。
+- [x] HTTP、schema、binding、remote R2/Queue、productionを変更しない。
+- [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5a2b2実装をcommitし、通常CIを通す。
+
+P5a2b2はlocal-onlyであり、staging objectやremote Workerに触れない。test fixtureの
+Ed25519 seedはRFCの公開test dataであり、ユーザのsecretや新規credentialではない。
+このcheckpointでCloudflare側のユーザ作業はない。
 
 ### 必要になった時だけ行う
 
@@ -978,7 +994,9 @@ health、credential-free `HELLO`まで成功した。運用者はinventoryを呼
 productionは変更していない。P5a1は完了した。P5a2はまずlocal-onlyのtransfer/import契約から
 始め、P5a2aのbounded artifact/signature transferはcommit `b55d365`と通常CIまで完了した。
 P5a2b1のpublic closure、canonical manifest、local R2 chunk readもinternal RPCとして実装し、
-full local gateとnamed dry-runまで完了した。
+full local gate、named dry-run、commit `bee3d69`、通常CIまで完了した。P5a2b2の
+deterministic cross-runtime vector、WorkerとRustのexact byte照合、fresh atomic import、
+identical re-exportもlocal実装し、full local gateとnamed dry-runまで完了した。
 HTTP route、schema、binding、remote R2/Queue、productionは変更していないため、現時点で新しい
 Cloudflare resourceやcredentialは不要である。production secret、
 R2 S3 credential、custom domainはまだ作らない。
