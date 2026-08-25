@@ -24,6 +24,10 @@ importers:
   apps/static-site: {}
 
   apps/worker:
+    dependencies:
+      '@edgefoss/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: ^1.0.0

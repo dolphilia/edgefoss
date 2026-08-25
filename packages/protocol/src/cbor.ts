@@ -1,5 +1,8 @@
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const textDecoder = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: false,
+});
 
 export const MAX_ARTIFACT_BYTES = 1024 * 1024;
 

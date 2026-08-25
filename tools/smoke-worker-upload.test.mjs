@@ -56,7 +56,7 @@ test("upload smoke proves declaration and finalize retries converge", async () =
     const pathname = new URL(url).pathname;
     let body;
     if (pathname === "/health") {
-      body = { components: { repository: { schemaVersion: 3 } } };
+      body = { components: { repository: { schemaVersion: 4 } } };
     } else if (pathname.endsWith("/finalize")) {
       body = {
         upload: {

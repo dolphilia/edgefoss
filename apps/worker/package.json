@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@edgefoss/protocol": "workspace:*"
+  },
   "scripts": {
     "build": "wrangler deploy --dry-run --env=\"\" --outdir dist",
     "check:startup": "wrangler check startup --env=\"\"",

@@ -1,4 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
+import { FormatError } from "@edgefoss/protocol";
+
+import {
+  preparePublishArtifact,
+  type PreparedPublishArtifact,
+  type PublishArtifactInput,
+  type PublishArtifactKind,
+} from "./artifact-publish.js";
+
+export type {
+  PublishArtifactInput,
+  PublishRefInput,
+} from "./artifact-publish.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -8,7 +21,7 @@ const JSON_HEADERS = {
 
 const SINGLE_PROJECT_AUTHORITY = "edgefoss-single-project-v0";
 const OWNER_PRINCIPAL = "owner";
-const REPOSITORY_SCHEMA_VERSION = 3;
+const REPOSITORY_SCHEMA_VERSION = 4;
 const MAX_SMALL_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const OWNER_TOKEN_PATTERN = /^efoss_owner_v0_[A-Za-z0-9_-]{43}$/;
@@ -41,6 +54,50 @@ export interface UploadResult {
   uploadId: string;
 }
 
+export interface AcceptedPublishResult {
+  artifactId: string;
+  kind: PublishArtifactKind;
+  policyEpoch: number;
+  realm: CloudRealm;
+  ref: {
+    generation: number;
+    name: "heads/main";
+    targetArtifactId: string;
+  } | null;
+  repoSequence: number;
+  status: "accepted";
+}
+
+export type PublishRejectionCode =
+  | "artifact_blob_missing"
+  | "artifact_actor_unauthorized"
+  | "artifact_change_root_invalid"
+  | "artifact_identity_conflict"
+  | "artifact_invalid"
+  | "artifact_logical_clock_invalid"
+  | "artifact_parent_invalid"
+  | "artifact_project_mismatch"
+  | "artifact_reference_missing"
+  | "artifact_tree_reference_invalid"
+  | "project_already_initialized"
+  | "project_not_initialized";
+
+export type PublishArtifactResult =
+  | AcceptedPublishResult
+  | { code: "operation_conflict"; status: "conflict" }
+  | { code: PublishRejectionCode; status: "rejected" }
+  | {
+      code: "policy_conflict";
+      currentPolicyEpoch: number;
+      status: "policy_conflict";
+    }
+  | {
+      code: "ref_conflict";
+      currentGeneration: number;
+      currentTargetArtifactId: string | null;
+      status: "ref_conflict";
+    };
+
 interface UploadRow extends Record<string, SqlStorageValue> {
   blob_id: string;
   byte_size: number;
@@ -59,6 +116,36 @@ interface BlobRow extends Record<string, SqlStorageValue> {
   byte_size: number;
   r2_key: string;
   realm: CloudRealm;
+}
+
+interface ArtifactRow extends Record<string, SqlStorageValue> {
+  accepted_seq: number;
+  actor_key: ArrayBuffer;
+  artifact_id: string;
+  kind: PublishArtifactKind;
+  logical_clock: string;
+  project_id: string;
+  realm: CloudRealm;
+}
+
+interface ArtifactReferenceRow extends Record<string, SqlStorageValue> {
+  actor_key: ArrayBuffer;
+  artifact_id: string;
+  kind: PublishArtifactKind;
+  logical_clock: string;
+  project_id: string;
+  realm: CloudRealm;
+}
+
+interface OperationRow extends Record<string, SqlStorageValue> {
+  principal_id: string;
+  request_hash: string;
+  result_json: string;
+}
+
+interface RefRow extends Record<string, SqlStorageValue> {
+  artifact_id: string;
+  generation: number;
 }
 
 export interface RepositoryHealth {
@@ -154,6 +241,85 @@ export class RepositoryDO extends DurableObject<Env> {
       schemaVersion = 3;
     }
 
+    if (schemaVersion === 3) {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS artifacts (
+          artifact_id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('project.genesis', 'tree', 'change')),
+          realm TEXT NOT NULL CHECK (realm IN ('public', 'members')),
+          actor_key BLOB NOT NULL,
+          logical_clock TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          canonical_body BLOB NOT NULL,
+          accepted_seq INTEGER NOT NULL UNIQUE
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS artifact_edges (
+          source_id TEXT NOT NULL,
+          edge_kind TEXT NOT NULL CHECK (edge_kind IN ('blob', 'parent', 'tree')),
+          target_id TEXT NOT NULL,
+          PRIMARY KEY (source_id, edge_kind, target_id)
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS attestations (
+          artifact_id TEXT NOT NULL,
+          actor_key BLOB NOT NULL,
+          signature BLOB NOT NULL,
+          PRIMARY KEY (artifact_id, actor_key)
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS receipts (
+          artifact_id TEXT PRIMARY KEY,
+          authority_id TEXT NOT NULL,
+          principal_id TEXT NOT NULL,
+          repo_seq INTEGER NOT NULL UNIQUE,
+          accepted_at INTEGER NOT NULL,
+          policy_epoch INTEGER NOT NULL,
+          operation_id TEXT NOT NULL
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS realm_refs (
+          realm TEXT NOT NULL CHECK (realm IN ('public', 'members')),
+          ref_name TEXT NOT NULL CHECK (ref_name = 'heads/main'),
+          artifact_id TEXT NOT NULL,
+          generation INTEGER NOT NULL CHECK (generation > 0),
+          updated_seq INTEGER NOT NULL,
+          PRIMARY KEY (realm, ref_name)
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS operations (
+          operation_id TEXT PRIMARY KEY,
+          operation_kind TEXT NOT NULL CHECK (operation_kind = 'publish'),
+          principal_id TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          result_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        ) STRICT;
+      `);
+      this.ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO edgefoss_meta (key, value) VALUES (?, ?)",
+        "project_id",
+        "",
+      );
+      this.ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO edgefoss_meta (key, value) VALUES (?, ?)",
+        "policy_epoch",
+        "0",
+      );
+      this.ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO edgefoss_meta (key, value) VALUES (?, ?)",
+        "repo_seq",
+        "0",
+      );
+      this.ctx.storage.sql.exec(
+        "UPDATE edgefoss_meta SET value = ? WHERE key = ?",
+        "4",
+        "schema_version",
+      );
+      schemaVersion = 4;
+    }
+
     if (schemaVersion !== REPOSITORY_SCHEMA_VERSION) {
       throw new Error("RepositoryDO schema version is unsupported.");
     }
@@ -161,6 +327,16 @@ export class RepositoryDO extends DurableObject<Env> {
 
   beginUpload(input: BeginUploadInput): BeginUploadResult {
     validateBeginUpload(input);
+
+    const publishOperation = this.ctx.storage.sql
+      .exec<{ operation_id: string }>(
+        "SELECT operation_id FROM operations WHERE operation_id = ?",
+        input.operationId,
+      )
+      .toArray()[0];
+    if (publishOperation) {
+      return { code: "operation_conflict", status: "conflict" };
+    }
 
     const existing = this.ctx.storage.sql
       .exec<UploadRow>(
@@ -319,6 +495,353 @@ export class RepositoryDO extends DurableObject<Env> {
     return uploadResult(this.#readUploadForPrincipal(uploadId, principalId));
   }
 
+  async publishArtifact(
+    input: PublishArtifactInput,
+  ): Promise<PublishArtifactResult> {
+    try {
+      validatePrincipal(input.principalId);
+      validateUuid(input.operationId, "operation_id");
+      const prepared = await preparePublishArtifact(input);
+      return this.#commitPublishedArtifact(prepared);
+    } catch (error) {
+      const code = publishRejectionCode(error);
+      if (code) return { code, status: "rejected" };
+      throw error;
+    }
+  }
+
+  #commitPublishedArtifact(
+    prepared: PreparedPublishArtifact,
+  ): PublishArtifactResult {
+    return this.ctx.storage.transactionSync(() => {
+      const uploadOperation = this.ctx.storage.sql
+        .exec<{ operation_id: string }>(
+          "SELECT operation_id FROM upload_sessions WHERE operation_id = ?",
+          prepared.operationId,
+        )
+        .toArray()[0];
+      if (uploadOperation) {
+        return { code: "operation_conflict", status: "conflict" };
+      }
+
+      const existingOperation = this.ctx.storage.sql
+        .exec<OperationRow>(
+          `SELECT principal_id, request_hash, result_json
+             FROM operations
+            WHERE operation_id = ?`,
+          prepared.operationId,
+        )
+        .toArray()[0];
+      if (existingOperation) {
+        if (
+          existingOperation.principal_id !== prepared.principalId ||
+          existingOperation.request_hash !== prepared.requestHash
+        ) {
+          return { code: "operation_conflict", status: "conflict" };
+        }
+        return parseStoredPublishResult(existingOperation.result_json);
+      }
+
+      const policyEpoch = this.#metaInteger("policy_epoch");
+      if (prepared.expectedPolicyEpoch !== policyEpoch) {
+        return this.#storePublishOperation(prepared, {
+          code: "policy_conflict",
+          currentPolicyEpoch: policyEpoch,
+          status: "policy_conflict",
+        });
+      }
+
+      const projectId = this.#metaValue("project_id");
+      if (prepared.kind === "project.genesis") {
+        if (projectId !== "" && projectId !== prepared.artifactId) {
+          throw new Error("project_already_initialized");
+        }
+      } else if (projectId === "") {
+        throw new Error("project_not_initialized");
+      } else if (prepared.projectId !== projectId) {
+        throw new Error("artifact_project_mismatch");
+      }
+      if (prepared.kind !== "project.genesis") {
+        const genesis = this.#readArtifactReference(projectId);
+        if (!genesis || genesis.kind !== "project.genesis") {
+          throw new Error("repository_project_corrupt");
+        }
+        if (!sameBuffer(genesis.actor_key, prepared.actorKey)) {
+          throw new Error("artifact_actor_unauthorized");
+        }
+      }
+
+      this.#validateArtifactReferences(prepared);
+      const currentRef = prepared.ref
+        ? this.#readRef(prepared.realm, prepared.ref.name)
+        : undefined;
+      if (
+        prepared.ref &&
+        ((!currentRef && prepared.ref.expectedGeneration !== 0) ||
+          (currentRef &&
+            currentRef.generation !== prepared.ref.expectedGeneration))
+      ) {
+        return this.#storePublishOperation(prepared, {
+          code: "ref_conflict",
+          currentGeneration: currentRef?.generation ?? 0,
+          currentTargetArtifactId: currentRef?.artifact_id ?? null,
+          status: "ref_conflict",
+        });
+      }
+
+      const existingArtifact = this.#readArtifact(prepared.artifactId);
+      if (existingArtifact) {
+        this.#assertExistingArtifact(existingArtifact, prepared);
+      }
+      if (existingArtifact && prepared.ref === null) {
+        return this.#storePublishOperation(prepared, {
+          artifactId: prepared.artifactId,
+          kind: prepared.kind,
+          policyEpoch,
+          realm: prepared.realm,
+          ref: null,
+          repoSequence: existingArtifact.accepted_seq,
+          status: "accepted",
+        });
+      }
+
+      const repoSequence = this.#nextRepoSequence();
+      if (!existingArtifact) {
+        this.ctx.storage.sql.exec(
+          `INSERT INTO artifacts (
+             artifact_id, project_id, kind, realm, actor_key, logical_clock,
+             created_at, canonical_body, accepted_seq
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          prepared.artifactId,
+          prepared.projectId,
+          prepared.kind,
+          prepared.realm,
+          prepared.actorKey,
+          prepared.logicalClock,
+          prepared.createdAt,
+          prepared.artifactBytes,
+          repoSequence,
+        );
+        for (const edge of prepared.edges) {
+          this.ctx.storage.sql.exec(
+            `INSERT OR IGNORE INTO artifact_edges (source_id, edge_kind, target_id)
+             VALUES (?, ?, ?)`,
+            prepared.artifactId,
+            edge.kind,
+            edge.targetId,
+          );
+        }
+        this.ctx.storage.sql.exec(
+          `INSERT INTO attestations (artifact_id, actor_key, signature)
+           VALUES (?, ?, ?)`,
+          prepared.artifactId,
+          prepared.actorKey,
+          prepared.signature,
+        );
+        this.ctx.storage.sql.exec(
+          `INSERT INTO receipts (
+             artifact_id, authority_id, principal_id, repo_seq, accepted_at,
+             policy_epoch, operation_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          prepared.artifactId,
+          SINGLE_PROJECT_AUTHORITY,
+          prepared.principalId,
+          repoSequence,
+          Date.now(),
+          policyEpoch,
+          prepared.operationId,
+        );
+        if (prepared.kind === "project.genesis") {
+          this.#setMetaValue("project_id", prepared.artifactId);
+        }
+      }
+
+      let acceptedRef: AcceptedPublishResult["ref"] = null;
+      if (prepared.ref) {
+        const generation = prepared.ref.expectedGeneration + 1;
+        this.ctx.storage.sql.exec(
+          `INSERT INTO realm_refs (
+             realm, ref_name, artifact_id, generation, updated_seq
+           ) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (realm, ref_name) DO UPDATE SET
+             artifact_id = excluded.artifact_id,
+             generation = excluded.generation,
+             updated_seq = excluded.updated_seq`,
+          prepared.realm,
+          prepared.ref.name,
+          prepared.artifactId,
+          generation,
+          repoSequence,
+        );
+        acceptedRef = {
+          generation,
+          name: prepared.ref.name,
+          targetArtifactId: prepared.artifactId,
+        };
+      }
+
+      return this.#storePublishOperation(prepared, {
+        artifactId: prepared.artifactId,
+        kind: prepared.kind,
+        policyEpoch,
+        realm: prepared.realm,
+        ref: acceptedRef,
+        repoSequence,
+        status: "accepted",
+      });
+    });
+  }
+
+  #validateArtifactReferences(prepared: PreparedPublishArtifact): void {
+    for (const edge of prepared.edges) {
+      if (edge.kind === "blob") {
+        const realms =
+          prepared.realm === "public" ? ["public"] : ["members", "public"];
+        const placeholders = realms.map(() => "?").join(", ");
+        const blob = this.ctx.storage.sql
+          .exec<{ blob_id: string }>(
+            `SELECT blob_id FROM blobs
+              WHERE blob_id = ? AND realm IN (${placeholders})
+              LIMIT 1`,
+            edge.targetId,
+            ...realms,
+          )
+          .toArray()[0];
+        if (!blob) throw new Error("artifact_blob_missing");
+        continue;
+      }
+
+      const target = this.#readArtifactReference(edge.targetId);
+      if (!target || target.project_id !== prepared.projectId) {
+        throw new Error("artifact_reference_missing");
+      }
+      if (edge.kind === "parent") {
+        if (target.kind !== "change" || target.realm !== prepared.realm) {
+          throw new Error("artifact_parent_invalid");
+        }
+        if (
+          sameBuffer(target.actor_key, prepared.actorKey) &&
+          BigInt(prepared.logicalClock) <= BigInt(target.logical_clock)
+        ) {
+          throw new Error("artifact_logical_clock_invalid");
+        }
+      } else {
+        const realmAllowed =
+          target.realm === prepared.realm ||
+          (prepared.realm === "members" && target.realm === "public");
+        if (target.kind !== "tree" || !realmAllowed) {
+          throw new Error("artifact_tree_reference_invalid");
+        }
+        if (prepared.kind === "change" && target.realm !== prepared.realm) {
+          throw new Error("artifact_change_root_invalid");
+        }
+      }
+    }
+  }
+
+  #assertExistingArtifact(
+    existing: ArtifactRow,
+    prepared: PreparedPublishArtifact,
+  ): void {
+    if (
+      existing.project_id !== prepared.projectId ||
+      existing.kind !== prepared.kind ||
+      existing.realm !== prepared.realm ||
+      existing.logical_clock !== prepared.logicalClock ||
+      !sameBuffer(existing.actor_key, prepared.actorKey)
+    ) {
+      throw new Error("artifact_identity_conflict");
+    }
+  }
+
+  #readArtifact(artifactId: string): ArtifactRow | undefined {
+    return this.ctx.storage.sql
+      .exec<ArtifactRow>(
+        `SELECT artifact_id, project_id, kind, realm, actor_key,
+                logical_clock, accepted_seq
+           FROM artifacts
+          WHERE artifact_id = ?`,
+        artifactId,
+      )
+      .toArray()[0];
+  }
+
+  #readArtifactReference(artifactId: string): ArtifactReferenceRow | undefined {
+    return this.ctx.storage.sql
+      .exec<ArtifactReferenceRow>(
+        `SELECT artifact_id, project_id, kind, realm, actor_key, logical_clock
+           FROM artifacts
+          WHERE artifact_id = ?`,
+        artifactId,
+      )
+      .toArray()[0];
+  }
+
+  #readRef(realm: CloudRealm, name: "heads/main"): RefRow | undefined {
+    return this.ctx.storage.sql
+      .exec<RefRow>(
+        `SELECT artifact_id, generation
+           FROM realm_refs
+          WHERE realm = ? AND ref_name = ?`,
+        realm,
+        name,
+      )
+      .toArray()[0];
+  }
+
+  #storePublishOperation(
+    prepared: PreparedPublishArtifact,
+    result: PublishArtifactResult,
+  ): PublishArtifactResult {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO operations (
+         operation_id, operation_kind, principal_id, request_hash,
+         result_json, created_at
+       ) VALUES (?, 'publish', ?, ?, ?, ?)`,
+      prepared.operationId,
+      prepared.principalId,
+      prepared.requestHash,
+      JSON.stringify(result),
+      Date.now(),
+    );
+    return result;
+  }
+
+  #metaValue(key: string): string {
+    return this.ctx.storage.sql
+      .exec<{ value: string }>(
+        "SELECT value FROM edgefoss_meta WHERE key = ?",
+        key,
+      )
+      .one().value;
+  }
+
+  #metaInteger(key: string): number {
+    const value = Number(this.#metaValue(key));
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error("repository_counter_invalid");
+    }
+    return value;
+  }
+
+  #setMetaValue(key: string, value: string): void {
+    this.ctx.storage.sql.exec(
+      "UPDATE edgefoss_meta SET value = ? WHERE key = ?",
+      value,
+      key,
+    );
+  }
+
+  #nextRepoSequence(): number {
+    const current = this.#metaInteger("repo_seq");
+    if (current === Number.MAX_SAFE_INTEGER) {
+      throw new Error("repository_sequence_exhausted");
+    }
+    const next = current + 1;
+    this.#setMetaValue("repo_seq", String(next));
+    return next;
+  }
+
   #bucketForRealm(realm: CloudRealm): R2Bucket {
     return realm === "public"
       ? this.env.PUBLIC_BLOBS
@@ -455,6 +978,60 @@ function validateBeginUpload(input: BeginUploadInput): void {
   ) {
     throw new Error("upload_size_invalid");
   }
+}
+
+function parseStoredPublishResult(value: string): PublishArtifactResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("operation_result_corrupt");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("operation_result_corrupt");
+  }
+  const status = (parsed as Record<string, unknown>).status;
+  if (
+    status !== "accepted" &&
+    status !== "conflict" &&
+    status !== "rejected" &&
+    status !== "policy_conflict" &&
+    status !== "ref_conflict"
+  ) {
+    throw new Error("operation_result_corrupt");
+  }
+  return parsed as PublishArtifactResult;
+}
+
+function publishRejectionCode(error: unknown): PublishRejectionCode | null {
+  if (error instanceof FormatError) return "artifact_invalid";
+  if (!(error instanceof Error)) return null;
+  const codes = new Set<PublishRejectionCode>([
+    "artifact_actor_unauthorized",
+    "artifact_blob_missing",
+    "artifact_change_root_invalid",
+    "artifact_identity_conflict",
+    "artifact_logical_clock_invalid",
+    "artifact_parent_invalid",
+    "artifact_project_mismatch",
+    "artifact_reference_missing",
+    "artifact_tree_reference_invalid",
+    "project_already_initialized",
+    "project_not_initialized",
+  ]);
+  return codes.has(error.message as PublishRejectionCode)
+    ? (error.message as PublishRejectionCode)
+    : error.message.startsWith("artifact_") ||
+        error.message.endsWith("_invalid")
+      ? "artifact_invalid"
+      : null;
+}
+
+function sameBuffer(left: ArrayBuffer, right: ArrayBuffer): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  const leftBytes = new Uint8Array(left);
+  const rightBytes = new Uint8Array(right);
+  return leftBytes.every((byte, index) => byte === rightBytes[index]);
 }
 
 function validatePrincipal(principalId: string): void {

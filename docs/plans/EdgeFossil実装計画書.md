@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-25
-改訂: Revision 6（P4b authenticated remote upload gate完了を反映）
+改訂: Revision 7（P4c canonical publish coreとschema 4 gateを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -625,8 +625,9 @@ Exit gate G3:
 現在の判定（2026-08-25）: G3はgoでP3 `single-static`を完了した。P4a0、P4a、
 U2、U3、U3aは完了した。P4bではowner認証済みHTTP adapterをschema 3へdeployし、
 固定30 byteのsynthetic public blobについてstaging、checksum検証、finalize、同一操作の
-再送収束をstagingで確認した。次はP4cでartifact acceptance、realm ref CAS、operation
-dedupeを一つのRepositoryDO transactionとして実装する。
+再送収束をstagingで確認した。P4cではcanonical artifact acceptance、realm ref CAS、
+operation dedupeを一つにしたschema 4 internal transactionをlocal実装した。次はcommitと
+通常CI成功後、remote publishを行わずschema 3から4へのmigrationとhealthだけを確認する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -745,6 +746,17 @@ uploadへ収束した。production、members data、Queue consumerは変更し�
 [`ADR 0029`](../adr/0029-owner-authenticated-small-upload-adapter.md)、
 [`local evidence`](../evidence/p4b-authenticated-upload-adapter-local-2026-08-25.md)、
 [`remote evidence`](../evidence/p4b-authenticated-upload-adapter-remote-2026-08-25.md)を参照する。
+
+P4c canonical publish core実行状況（2026-08-25）: shared protocolによるcanonical CBOR、
+artifact ID、Ed25519署名をtransaction前に検証し、schema 4の同期SQLite transaction内で
+global operation collision、policy epoch、single-project identity、bootstrap owner key、
+finalized blobとrealm flow、`heads/main` generation CAS、artifact/edge/attestation/receipt、
+repo sequence、operation resultを一括処理するtyped internal RPCをlocal実装した。100回の
+accepted retry、concurrent CAS、missing-blob rollback、public-to-members denialがWorkers
+runtimeでgreenである。HTTP publish route、remote artifact write、Queue consumerはまだない。
+commit/通常CI成功後はmanual staging deployでschema 4 healthだけを確認する。詳細は
+[`ADR 0030`](../adr/0030-transactional-canonical-artifact-publication.md)と
+[`local evidence`](../evidence/p4c-canonical-publish-core-local-2026-08-25.md)を参照する。
 
 成果物:
 

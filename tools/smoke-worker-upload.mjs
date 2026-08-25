@@ -141,8 +141,8 @@ export async function smokeWorkerUpload({ origin, token, fetchImpl = fetch }) {
   const health = await requestJson(fetchImpl, `${origin}/health`, {
     method: "GET",
   });
-  if (health?.components?.repository?.schemaVersion !== 3) {
-    fail("health did not report repository schema version 3");
+  if (health?.components?.repository?.schemaVersion !== 4) {
+    fail("health did not report repository schema version 4");
   }
 
   return {
@@ -150,7 +150,7 @@ export async function smokeWorkerUpload({ origin, token, fetchImpl = fetch }) {
     byteSize: SMOKE_BYTES.byteLength,
     operationId: OPERATION_ID,
     realm: "public",
-    repositorySchemaVersion: 3,
+    repositorySchemaVersion: 4,
     retryConverged: true,
     state: "finalized",
   };

@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 const EXPECTED_BODY = {
   components: {
     repository: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       status: "ok",
       storage: "sqlite",
     },
