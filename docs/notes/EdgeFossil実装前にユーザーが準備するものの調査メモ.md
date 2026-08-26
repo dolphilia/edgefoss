@@ -995,12 +995,48 @@ P5b1aのWorkers runtime testが使うR2/DOはlocal test環境だけであり、C
 - [x] TypeScript/Rust/Workersの二change vectorでsequence 4、ref generation 2までlocal検証する。
 - [x] HTTP、schema、binding、secret、R2/Queue、staging/productionを変更しない。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5b1b実装をcommitし、通常CIを通す。
+- [x] P5b1b実装をcommitし、通常CIを通す（commit `c96ada8`）。
 
 P5b1bでユーザが準備・取得・設定するものはない。テストはlocal Durable Object/R2だけを使い、既存の
 `EDGEFOSS_OWNER_TOKEN`やCloudflare API tokenも入力しない。Dashboard操作、manual deploy、remote
 preflight/publish、R2 write、Queue enqueueは行わない。P5b2で認証付きHTTP surfaceを追加する前に
 公開・認証境界を再レビューし、P5b3のstaging mutationは具体的効果を示した別の明示承認後に限る。
+
+### P5b2 owner-authenticated public push adapterで行う
+
+- [x] owner bearer tokenをrequest body読取前に検証する。
+- [x] preflight JSONを65,536 byte、各256 sorted/unique ID、public/protocol 0へboundする。
+- [x] principalをclient入力にせず、認証結果から`owner`として注入する。
+- [x] project conflictでmissing inventoryやauthority project IDを返さない。
+- [x] preflightをread-only observationのままにし、既存upload/publish endpointを再利用する。
+- [x] anonymous `HELLO`、schema、binding、secret、R2/Queue設定、productionを変更しない。
+- [x] fresh/incremental vectorをHTTP経由で実行し、exact retryと最終収束をlocal確認する。
+- [x] deploy workflowにcredential-freeなHTTP 401境界auditを追加する。
+- [x] tokenをenvironmentからだけ読むread-only owner preflight auditを追加する。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5b2実装をcommitし、通常CIを通す。
+- [ ] commit/通常CI後、新しいpreflight routeのstaging公開効果をaccount ownerが明示承認する。
+
+P5b2のlocal実装でユーザが新たに準備するものはない。既存staging Workerにはすでに
+`EDGEFOSS_OWNER_TOKEN`が設定済みであり、新しいsecretやCloudflare resourceを作らない。local testは
+fixture tokenとlocal Durable Object/R2だけを使う。commit/通常CI後に承認を求めるのは、stagingで
+新しいowner-only routeが到達可能になる効果である。承認前にdeployしない。承認後の最初のremote確認も
+workflowによるunauthenticated HTTP 401と、ownerが手元のtokenで行うread-only preflightまでに限定し、artifact/blob/
+ref/Queue/R2を変更するpush smokeはP5b3の別承認まで行わない。
+
+staging deployとworkflow内のHTTP 401 auditが成功した後、account ownerはrepository rootのterminalで次を
+実行する。tokenをcommand lineへ直接書かず、値を共有・貼付しない。
+
+```bash
+read -s EDGEFOSS_OWNER_TOKEN
+export EDGEFOSS_OWNER_TOKEN
+pnpm run cloud:audit-public-push-owner -- --origin https://edgefoss-staging.miga-and-raia.workers.dev
+unset EDGEFOSS_OWNER_TOKEN
+```
+
+成功時は`remoteWritePerformed: false`、現在の`acceptedSequence`、`policyEpoch`、`projectId`、public refが
+表示される。報告するのはexit statusとこれらの非secret fieldだけで、token値は報告しない。失敗しても
+upload/publish smokeへ進まず、tokenは必ず`unset`する。この手順は新routeのstaging公開承認前には実行しない。
 
 ### 必要になった時だけ行う
 

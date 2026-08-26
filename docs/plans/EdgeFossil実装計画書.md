@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 35（P5b1b linear incremental push planを具体化）
+改訂: Revision 36（P5b2 owner-authenticated push preflight adapterを具体化）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -680,7 +680,10 @@ schema、binding、credential、R2/Queue、remote stateは不変である。comm
 blob/artifact/ref mutation planをRustで生成し、同じvectorをWorkers runtimeで実行するlocal-only
 cross-runtime契約を実装した。commit `80dfc37`と通常CIが成功したためP5b1aは完了した。
 P5b1bでは既存のlinear ancestor、部分完了、response-loss retry、完全収束、未知head競合を
-local-only plannerへ追加した。full local gateとnamed dry-runは成功し、commitと通常CIは未確認である。
+local-only plannerへ追加した。commit `c96ada8`と通常CIが成功したためP5b1bは完了した。P5b2では
+既存owner tokenで保護したbounded HTTP preflight adapterと、既存mutation routeを組み合わせる
+cross-runtime HTTP testをlocal実装した。full local gateとnamed dry-runは成功し、commitと通常CIは
+未確認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1132,8 +1135,8 @@ P5bは次の順で小さく進める。
 |---|---|
 | P5b0 internal push preflight | 完了。commit `d01815e`と通常CI成功を確認 |
 | P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
-| P5b1b incremental push plan | full local gateとnamed dry-run成功。commit/通常CI待ち |
-| P5b2 authenticated push adapter | 未着手。既存owner secretでHTTP negotiation/orchestration |
+| P5b1b incremental push plan | 完了。commit `c96ada8`と通常CI成功を確認 |
+| P5b2 authenticated push adapter | full local gateとnamed dry-run成功。commit/通常CI待ち |
 | P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
 
 P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
@@ -1171,7 +1174,25 @@ TypeScriptの二change vectorをRustが独立再現し、Workers runtimeはfresh
 実行し、exact retry、最終sequence 4/ref generation 2を確認する。HTTP route、schema、binding、secret、
 R2/Queue設定、staging/productionは変更しない。local verificationは
 [`P5b1b local evidence`](../evidence/p5b1b-incremental-public-push-plan-local-2026-08-26.md)を参照する。
-full local gateとnamed staging/production dry-runはgreenであり、commitと通常CIを完了条件とする。
+full local gateとnamed staging/production dry-run、commit `c96ada8`、通常CIはgreenであり、P5b1bは
+完了した。
+
+P5b2では[`ADR 0046`](../adr/0046-owner-authenticated-public-push-preflight-adapter.md)に従い、
+`POST /api/v0/sync/push/preflight`だけを追加する。既存`EDGEFOSS_OWNER_TOKEN`をbody読取前に検証し、
+65,536 byteのexact-key JSON、public/protocol 0、各256件のsorted/unique canonical IDへboundする。
+principalは認証結果からWorkerが`owner`として注入する。成功はHTTP 200、別projectはinventoryを返さず
+HTTP 409 `project_conflict`、invalidはHTTP 400とし、全responseを`no-store`にする。preflightは
+read-only observationでleaseではない。blob upload/finalizeとartifact/ref publicationは既存の短い
+authenticated endpointをそのまま使い、monolithic push requestは作らない。anonymous `HELLO`も
+変更しない。共有vectorはHTTPだけでfreshとincremental planを実行し、各exact retryと最終sequence 4/
+ref generation 2を確認する。schema、binding、secret、R2/Queue設定、staging/productionは変更しない。
+manual deploy workflowにはcredentialを持たず、不正JSONへのexact HTTP 401だけを要求するfail-closed auditを
+追加する。このauditはauthenticated preflightもmutationも行わない。owner向けの別auditはtokenを
+environmentからだけ読み、HELLOで得たprojectへ空inventoryを照合し、snapshotだけを表示する。
+local verificationは
+[`P5b2 local evidence`](../evidence/p5b2-authenticated-public-push-adapter-local-2026-08-26.md)を参照する。
+full local gateとnamed dry-runはgreenである。commit、通常CIの後、新routeのstaging公開効果を別承認し、
+remote writeはさらにP5b3の別承認まで行わない。
 
 API原則:
 

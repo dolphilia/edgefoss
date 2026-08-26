@@ -49,5 +49,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0043](0043-bounded-internal-public-push-preflight.md)                  | Preflight push against one authority snapshot       | Accepted for P5b0 local          |
 | [0044](0044-deterministic-fresh-public-push-plan.md)                    | Derive deterministic fresh public push plan         | Accepted for P5b1a local         |
 | [0045](0045-deterministic-linear-public-push-resume.md)                 | Resume push along known linear ancestry             | Accepted for P5b1b local         |
+| [0046](0046-owner-authenticated-public-push-preflight-adapter.md)       | Expose bounded authenticated push preflight         | Accepted for P5b2 local          |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

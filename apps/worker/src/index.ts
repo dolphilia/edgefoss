@@ -57,6 +57,8 @@ import {
   type PublicArtifactTransferResult,
 } from "./sync-transfer.js";
 import {
+  MAX_PUSH_PREFLIGHT_ARTIFACTS,
+  MAX_PUSH_PREFLIGHT_BLOBS,
   preflightPublicPush,
   type PublicPushPreflightInput,
   type PublicPushPreflightResult,
@@ -129,6 +131,7 @@ const OWNER_PRINCIPAL = "owner";
 const REPOSITORY_SCHEMA_VERSION = 5;
 const MAX_SMALL_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
+const MAX_PUSH_PREFLIGHT_JSON_BODY_BYTES = 64 * 1024;
 const MAX_PUBLISH_JSON_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_SIGNATURE_BYTES = 1024;
 const MAX_OUTBOX_MATCH_BODY_BYTES = 256;
@@ -2114,6 +2117,30 @@ async function handlePublishApi(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ publication: result }, status);
 }
 
+async function handlePublicPushPreflightApi(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const authorizationFailure = await authorizeOwner(request, env);
+  if (authorizationFailure) return authorizationFailure;
+  if (request.method !== "POST") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "POST",
+    });
+  }
+
+  const result = await repositoryStub(env).preflightPublicPush(
+    await readPublicPushPreflightDeclaration(request),
+  );
+  const status =
+    result.status === "ok"
+      ? 200
+      : result.code === "project_conflict"
+        ? 409
+        : 400;
+  return jsonResponse({ preflight: result }, status);
+}
+
 async function handleOutboxApi(
   request: Request,
   env: Env,
@@ -2601,6 +2628,83 @@ async function readOutboxMatchDeclaration(request: Request): Promise<string> {
   return input.artifactId;
 }
 
+async function readPublicPushPreflightDeclaration(
+  request: Request,
+): Promise<PublicPushPreflightInput> {
+  if (
+    request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
+  ) {
+    throw new HttpRequestError(
+      "content_type_invalid",
+      "Content-Type must be application/json.",
+      415,
+    );
+  }
+  const bytes = await readBoundedBody(
+    request,
+    MAX_PUSH_PREFLIGHT_JSON_BODY_BYTES,
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw pushPreflightRequestError();
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw pushPreflightRequestError();
+  }
+  const input = parsed as Record<string, unknown>;
+  if (
+    !hasExactKeys(input, [
+      "artifactIds",
+      "blobIds",
+      "projectId",
+      "protocolVersion",
+      "realm",
+    ]) ||
+    input.protocolVersion !== 0 ||
+    input.realm !== "public" ||
+    typeof input.projectId !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(input.projectId) ||
+    !validPushPreflightIds(input.artifactIds, MAX_PUSH_PREFLIGHT_ARTIFACTS) ||
+    !validPushPreflightIds(input.blobIds, MAX_PUSH_PREFLIGHT_BLOBS)
+  ) {
+    throw pushPreflightRequestError();
+  }
+  return {
+    artifactIds: input.artifactIds,
+    blobIds: input.blobIds,
+    principalId: OWNER_PRINCIPAL,
+    projectId: input.projectId,
+    protocolVersion: 0,
+    realm: "public",
+  };
+}
+
+function validPushPreflightIds(
+  value: unknown,
+  maximum: number,
+): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= maximum &&
+    value.every(
+      (id, index, ids) =>
+        typeof id === "string" &&
+        /^sha256:[0-9a-f]{64}$/u.test(id) &&
+        (index === 0 || id > ids[index - 1]!),
+    )
+  );
+}
+
+function pushPreflightRequestError(): HttpRequestError {
+  return new HttpRequestError(
+    "push_preflight_invalid",
+    "The public push preflight request is invalid.",
+    400,
+  );
+}
+
 function mapRequestError(error: unknown, pathname: string): Response {
   if (error instanceof HttpRequestError) {
     return errorResponse(error.code, error.message, error.status);
@@ -2677,6 +2781,14 @@ export default {
     if (url.pathname === "/api/v0/artifacts") {
       try {
         return await handlePublishApi(request, env);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname === "/api/v0/sync/push/preflight") {
+      try {
+        return await handlePublicPushPreflightApi(request, env);
       } catch (error) {
         return mapRequestError(error, url.pathname);
       }

@@ -61,3 +61,5 @@ jobs:
         run: node tools/audit-worker-public-sync.mjs --origin https://edgefoss-staging.miga-and-raia.workers.dev
       - name: Verify existing public transfer profile boundary
         run: node tools/audit-worker-public-transfer.mjs --origin https://edgefoss-staging.miga-and-raia.workers.dev
+      - name: Verify owner-only public push preflight boundary
+        run: node tools/audit-worker-public-push.mjs --origin https://edgefoss-staging.miga-and-raia.workers.dev

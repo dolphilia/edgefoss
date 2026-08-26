@@ -2,8 +2,8 @@
 
 - Date: 2026-08-26
 - Scope: deterministic resume along an existing public linear history
-- Result: implementation, cross-runtime execution, full gate, and named dry-runs
-  pass; commit, push, and ordinary GitHub Actions remain pending
+- Result: implementation, cross-runtime execution, full gate, named dry-runs,
+  commit `c96ada8`, push, and ordinary GitHub Actions pass
 
 ## Implemented contract
 
@@ -68,7 +68,3 @@ validation. The latest observed `@cloudflare/workers-types` version is
   state changed.
 - No user Cloudflare work is required.
 - This does not authorize P5b2 HTTP exposure or P5b3 staging mutation.
-
-## Remaining gate
-
-- commit, push, and ordinary GitHub Actions confirmation.

@@ -116,3 +116,36 @@ visible and is handled by later garbage collection.
 deterministically regenerates both bundles and plans; the Rust planner MUST
 independently reproduce every step and operation ID; the Workers runtime MUST
 execute the committed plans with exact retry convergence.
+
+## Owner-authenticated HTTP preflight adapter
+
+Protocol 0 exposes exactly `POST /api/v0/sync/push/preflight`. The adapter MUST
+authenticate the existing owner bearer token before reading the request body.
+It accepts `application/json` up to 65,536 bytes with exactly these fields:
+
+```json
+{
+  "artifactIds": [],
+  "blobIds": [],
+  "projectId": "sha256:...",
+  "protocolVersion": 0,
+  "realm": "public"
+}
+```
+
+The adapter injects `principalId: "owner"`; the client MUST NOT supply a
+principal. Artifact and blob arrays are independently limited to 256 canonical
+IDs and MUST be strictly ascending, which also rejects duplicates.
+
+Responses always use `Cache-Control: no-store`. A valid observation is HTTP 200
+with `{ "preflight": { ... } }`. A different initialized project is HTTP 409
+with only `project_conflict`; malformed input is HTTP 400
+`push_preflight_invalid`. Missing or invalid owner authentication is HTTP 401
+and MUST reveal no snapshot or parsing detail. Other methods are HTTP 405 with
+`Allow: POST`.
+
+This endpoint performs no mutation and grants no lease. The client executes the
+returned local plan through the existing bounded upload/finalize and artifact
+publication endpoints. Each mutation remains independently authenticated and
+revalidates policy, referenced objects, operation deduplication, and ref CAS.
+Anonymous public `HELLO` does not advertise owner-only push capability.
