@@ -942,10 +942,11 @@ Ed25519 seedはRFCの公開test dataであり、ユーザのsecretや新規crede
   - anonymous plan、artifact/signature、blob range routeが公開される。
   - 第三者がstaging public headからreachableな全objectをdownloadできる。
   - 未生成なら最初のplanで既存`sync_cursor_key_v0` meta 1行が生成され得る。
-- [ ] 承認後に限りmanual staging deployし、schema 5 health、`TRANSFER` HELLO、既存profile境界を確認する。
+- [x] 承認後に限りmanual staging deployし、schema 5 health、`TRANSFER` HELLO、既存profile境界を確認する。
   - commit `75a6544`の初回deploy、schema 5 health、HELLOは通過した。
   - profile境界auditはempty POSTのedge表現差でHTTP 400となり、DO RPC前に停止した。
-  - zero-byte stream修正のcommit/通常CI後、同じworkflowを再実行する。
+  - zero-byte stream修正のcommit/通常CI後、同じworkflowを再実行する方針とした。
+  - 修正commit `e628203`の再deploy、health、HELLO、期待する409 profile境界は成功した。
 
 この段階で新しいCloudflare resource、secret、R2 credentialは不要である。承認前にDashboard操作や
 remote commandを行う必要もない。既存staging headはtree/change clockが1/2で現行`complete` profileの

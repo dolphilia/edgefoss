@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 31（P5a2c staging empty-body drift修正を反映）
+改訂: Revision 32（P5a2c staging activation完了を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -664,13 +664,14 @@ closure、canonical manifest、bounded R2 blob chunkをlocal実装し、full loc
 staging/production dry-run、commit `bee3d69`、通常CIまでgreenである。P5a2b2では
 deterministicな署名付きWorker clone vectorとRust fresh import/identical re-exportをlocal実装し、
 full local gate、named staging/production dry-run、commit `f13d705`、通常CIまでgreenである。
-P5a2cでは600秒のopaque grantとanonymous plan/artifact/blob range HTTP adapterをlocal実装した。
+P5a2cでは600秒のopaque grantとanonymous plan/artifact/blob range HTTP adapterを実装した。
 reachable public closureとpolicy epochへbindし、再送・中断再開をserver sessionなしで成立させる。
-full local gate、named dry-run、commit `30b1784`、通常CIはgreenである。remote deployはまだ行わず、
-commit `005152d`の通常CI後にaccount ownerが公開効果を明示承認した。既存staging headはcomplete
+full local gate、named dry-run、commit `30b1784`、通常CIを通し、commit `005152d`の通常CI後に
+account ownerが公開効果を明示承認した。既存staging headはcomplete
 profile非対応である。commit `75a6544`のmanual deploy、schema 5 health、TRANSFER HELLOは通過したが、
 最終plan auditはempty POSTのedge表現差により400となった。zero-byte streamをboundedに受ける修正を
-local実装し、次はfull gate、commit、通常CI後に同じworkflowを再実行する。
+commit `e628203`として通常CIを通し、同じworkflowの再実行でdeploy、health、HELLO、期待する
+`clone_profile_unsupported`境界まで成功した。P5a2c staging activationは完了した。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -990,7 +991,7 @@ P5aはさらに小さく分割する。
 |---|---|
 | P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
 | P5a1 external read adapter | 完了。commit `58c8c3a`をstagingへdeployし、schema 5 healthとanonymous HELLOがgreen |
-| P5a2 transfer/import | P5a2b2完了。P5a2c external adapterをlocal実装 |
+| P5a2 transfer/import | P5a2c staging activation完了。remote complete clone成功は別gate |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
 anonymous public viewだけのprotocol 0 `HELLO`とpaged `INVENTORY`をinternal RPCとして固定した。
@@ -1038,7 +1039,7 @@ P5a2はさらに次の順で分割する。
 | P5a2a internal artifact transfer | 完了。commit `b55d365`と通常CI成功を確認 |
 | P5a2b1 closure/blob/manifest | 完了。commit `bee3d69`と通常CI成功を確認 |
 | P5a2b2 cross-runtime import | 完了。commit `f13d705`と通常CI成功を確認 |
-| P5a2c external transfer adapter | 初回deploy済み。empty-body drift修正のcommit/CI待ち |
+| P5a2c external transfer adapter | 完了。commit `e628203`をstagingへdeployしprofile境界audit成功 |
 
 P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
 空のinternal snapshot anchorと、sorted/uniqueなbounded WANTを受けるRepositoryDO RPCを追加した。
@@ -1105,7 +1106,16 @@ commit `75a6544`のmanual workflowはWorker deploy、schema 5 health、`TRANSFER
 使い、nullとempty streamの両方を許可しつつ非empty bodyを413にする。詳細は
 [`P5a2c first staging deploy drift evidence`](../evidence/p5a2c-first-staging-deploy-empty-body-drift-2026-08-26.md)
 を参照する。この失敗ではgrant/key、artifact/blob read、R2/Queue/ref、productionは変更されていない。
-修正のfull gate、commit、通常CI後に同じmain-only workflowだけを再実行する。
+修正のfull gate、commit、通常CI後に同じmain-only workflowだけを再実行する方針とした。
+
+zero-byte stream修正はcommit `e628203`と通常CIを通過した。同じmain-only workflowの再実行では
+staging deploy、schema 5 health、`TRANSFER` HELLO、plan HTTP 409
+`clone_profile_unsupported`がすべて成功した。artifact/blob readとremote writeは行わず、Queue/R2設定と
+productionも不変である。詳細は
+[`P5a2c remote evidence`](../evidence/p5a2c-public-transfer-adapter-remote-deploy-2026-08-26.md)を参照する。
+P5a2c staging activationは完了した。ただし既存staging historyではsuccessful complete cloneと
+disconnect resumeをremote証明できない。canonical staging publication/ref advanceまたは互換projectを
+使う検証は、恒久state変更を伴う別の明示承認gateとする。
 
 API原則:
 

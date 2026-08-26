@@ -45,5 +45,8 @@ formatting, types, and 119 Markdown files are green. Wrangler 4.125.0 staging
 and production dry-runs both produced a 144.19 KiB bundle (28.38 KiB gzip) and
 retained their existing binding topology.
 
-Commit and ordinary CI remain. Then rerun the same main-only manual workflow.
-Do not run a separate curl, upload, publish, or Queue smoke.
+The correction was committed as `e628203`, ordinary CI passed, and the same
+main-only manual workflow succeeded. Health, `TRANSFER` HELLO, and the expected
+HTTP 409 `clone_profile_unsupported` boundary all passed without a separate
+curl, upload, publish, or Queue smoke. See the
+[`P5a2c remote evidence`](p5a2c-public-transfer-adapter-remote-deploy-2026-08-26.md).
