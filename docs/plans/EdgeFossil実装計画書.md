@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 28（P5a2c opaque public transfer adapterを反映）
+改訂: Revision 29（P5a2c commit/CI完了とstaging承認gateを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -666,7 +666,8 @@ deterministicな署名付きWorker clone vectorとRust fresh import/identical re
 full local gate、named staging/production dry-run、commit `f13d705`、通常CIまでgreenである。
 P5a2cでは600秒のopaque grantとanonymous plan/artifact/blob range HTTP adapterをlocal実装した。
 reachable public closureとpolicy epochへbindし、再送・中断再開をserver sessionなしで成立させる。
-remote deployはまだ行わず、local gateと通常CIの後にもaccount ownerの公開効果承認を必要とする。
+full local gate、named dry-run、commit `30b1784`、通常CIはgreenである。remote deployはまだ行わず、
+account ownerの公開効果承認を必要とする。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1034,7 +1035,7 @@ P5a2はさらに次の順で分割する。
 | P5a2a internal artifact transfer | 完了。commit `b55d365`と通常CI成功を確認 |
 | P5a2b1 closure/blob/manifest | 完了。commit `bee3d69`と通常CI成功を確認 |
 | P5a2b2 cross-runtime import | 完了。commit `f13d705`と通常CI成功を確認 |
-| P5a2c external transfer adapter | local実装とfull gate完了。commit、通常CI待ち |
+| P5a2c external transfer adapter | commit `30b1784`と通常CI完了。staging公開効果の承認待ち |
 
 P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
 空のinternal snapshot anchorと、sorted/uniqueなbounded WANTを受けるRepositoryDO RPCを追加した。
@@ -1081,7 +1082,7 @@ artifact/signature POSTと、最大1 MiBのblob range GETで取得する。同�
 `HELLO`は`TRANSFER`、opaque grant、TTL、profile、上限を同時に広告する。schema 5、binding、secret、
 R2 object、Queue、productionは変更しない。詳細は
 [`P5a2c local evidence`](../evidence/p5a2c-public-transfer-adapter-local-2026-08-26.md)を参照する。
-full local gateとnamed staging/production dry-runはgreenである。commitと通常CIが成功しても
+full local gate、named staging/production dry-run、commit `30b1784`、通常CIはgreenである。それでも
 staging deployは自動承認されない。anonymous third partyが既存
 staging public headのreachable artifact/signature/blobをdownloadできる公開効果と、初回planで
 既存cursor key meta 1行がlazy生成され得ることをaccount ownerが明示承認した後だけmanual deployする。

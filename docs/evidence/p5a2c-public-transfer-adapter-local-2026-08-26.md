@@ -62,7 +62,7 @@ write, Queue operation, staging mutation, or production change was performed.
 
 ## Staging-effect gate
 
-Commit and ordinary CI must pass first. They still do not authorize deployment.
+Commit `30b1784` and ordinary CI passed. They do not authorize deployment.
 Before a manual staging deploy, the account owner must explicitly approve all
 of these effects:
 

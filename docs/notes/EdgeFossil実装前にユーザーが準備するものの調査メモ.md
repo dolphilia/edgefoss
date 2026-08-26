@@ -936,7 +936,7 @@ Ed25519 seedはRFCの公開test dataであり、ユーザのsecretや新規crede
 - [x] reachable closureを毎回確認し、dangling public artifactを取得不能にする。
 - [x] schema 5、binding、secret、R2 object、Queue、productionを変更しない。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5a2c実装をcommitし、通常CIを通す。
+- [x] P5a2c実装をcommitし、通常CIを通す（commit `30b1784`）。
 - [ ] 次の全公開効果をaccount ownerが明示承認する。
   - `HELLO`が`TRANSFER`を広告する。
   - anonymous plan、artifact/signature、blob range routeが公開される。
@@ -1018,8 +1018,9 @@ full local gate、named dry-run、commit `bee3d69`、通常CIまで完了した�
 deterministic cross-runtime vector、WorkerとRustのexact byte照合、fresh atomic import、
 identical re-exportもlocal実装し、full local gateとnamed dry-runまで完了した。
 commit `f13d705`と通常CIも成功し、P5a2b2は完了した。P5a2cのopaque public transfer grantと
-anonymous HTTP adapterをlocal実装中である。schema、binding、remote R2/Queue、productionは
-変更していないため、現時点で新しいCloudflare resourceやcredentialは不要である。stagingへ
+anonymous HTTP adapterもfull local gate、named dry-run、commit `30b1784`、通常CIまで完了した。
+schema、binding、remote R2/Queue、productionは変更していないため、現時点で新しいCloudflare
+resourceやcredentialは不要である。stagingへ
 公開する前に、reachable public objectを第三者がdownload可能になる効果の明示承認だけを求める。
 production secret、
 R2 S3 credential、custom domainはまだ作らない。
