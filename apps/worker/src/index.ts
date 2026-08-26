@@ -2252,7 +2252,6 @@ async function handlePublicTransferPlanApi(
     });
   }
   if (
-    request.body !== null ||
     !hasExactQueryParameters(url.searchParams, [
       "profile",
       "project",
@@ -2266,6 +2265,7 @@ async function handlePublicTransferPlanApi(
       400,
     );
   }
+  await readBoundedBody(request, 0);
   const projectId = url.searchParams.get("project") ?? "";
   if (
     !/^sha256:[0-9a-f]{64}$/u.test(projectId) ||

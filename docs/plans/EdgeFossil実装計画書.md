@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 30（P5a2c staging承認と既存profile境界監査を反映）
+改訂: Revision 31（P5a2c staging empty-body drift修正を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -668,7 +668,9 @@ P5a2cでは600秒のopaque grantとanonymous plan/artifact/blob range HTTP adapt
 reachable public closureとpolicy epochへbindし、再送・中断再開をserver sessionなしで成立させる。
 full local gate、named dry-run、commit `30b1784`、通常CIはgreenである。remote deployはまだ行わず、
 commit `005152d`の通常CI後にaccount ownerが公開効果を明示承認した。既存staging headはcomplete
-profile非対応のため、次はread-only監査を含むincrementのcommit/通常CI後にmanual deployする。
+profile非対応である。commit `75a6544`のmanual deploy、schema 5 health、TRANSFER HELLOは通過したが、
+最終plan auditはempty POSTのedge表現差により400となった。zero-byte streamをboundedに受ける修正を
+local実装し、次はfull gate、commit、通常CI後に同じworkflowを再実行する。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1036,7 +1038,7 @@ P5a2はさらに次の順で分割する。
 | P5a2a internal artifact transfer | 完了。commit `b55d365`と通常CI成功を確認 |
 | P5a2b1 closure/blob/manifest | 完了。commit `bee3d69`と通常CI成功を確認 |
 | P5a2b2 cross-runtime import | 完了。commit `f13d705`と通常CI成功を確認 |
-| P5a2c external transfer adapter | 公開効果承認済み。read-only profile境界監査のcommit/CI待ち |
+| P5a2c external transfer adapter | 初回deploy済み。empty-body drift修正のcommit/CI待ち |
 
 P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
 空のinternal snapshot anchorと、sorted/uniqueなbounded WANTを受けるRepositoryDO RPCを追加した。
@@ -1096,6 +1098,14 @@ bodyなしplan POSTがHTTP 409 `clone_profile_unsupported`へ安全に収束す�
 R2 write、ref advance、Queue enqueueを行わない。成功planや別の拒否理由はstate driftとしてfailする。
 artifact/range retryのremote成功を証明するにはcanonical publicationとpublic ref advanceが必要なため、
 今回の承認へ含めず別gateへ分離する。
+
+commit `75a6544`のmanual workflowはWorker deploy、schema 5 health、`TRANSFER` HELLOまで通過した。
+最後のprofile境界監査ではbodyなしNode fetchがedge上でempty readable streamとして見え、handlerの
+`request.body === null`判定によりDO RPC前にHTTP 400となった。既存bounded body readerを0 byte上限で
+使い、nullとempty streamの両方を許可しつつ非empty bodyを413にする。詳細は
+[`P5a2c first staging deploy drift evidence`](../evidence/p5a2c-first-staging-deploy-empty-body-drift-2026-08-26.md)
+を参照する。この失敗ではgrant/key、artifact/blob read、R2/Queue/ref、productionは変更されていない。
+修正のfull gate、commit、通常CI後に同じmain-only workflowだけを再実行する。
 
 API原則:
 

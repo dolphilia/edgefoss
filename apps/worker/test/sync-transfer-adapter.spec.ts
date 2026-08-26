@@ -192,7 +192,7 @@ describe("anonymous public transfer HTTP adapter", () => {
     );
     const danglingId = await publishDanglingTree(repository);
 
-    const planned = await fetchWorker(planUrl(), { method: "POST" });
+    const planned = await fetchWorker(planUrl(), { body: "", method: "POST" });
     expect(planned.status).toBe(200);
     expect(planned.headers.get("cache-control")).toBe("no-store");
     const body = await planned.json<{
@@ -364,8 +364,16 @@ describe("anonymous public transfer HTTP adapter", () => {
       method: "POST",
     });
     const wrongMethod = await fetchWorker(planUrl());
+    const nonemptyBody = await fetchWorker(planUrl(), {
+      body: "x",
+      method: "POST",
+    });
     expect(duplicate.status).toBe(400);
     expect(wrongMethod.status).toBe(405);
+    expect(nonemptyBody.status).toBe(413);
+    await expect(nonemptyBody.json()).resolves.toMatchObject({
+      error: { code: "request_body_too_large" },
+    });
     await expect(repository.health()).resolves.toMatchObject({
       schemaVersion: 5,
     });
