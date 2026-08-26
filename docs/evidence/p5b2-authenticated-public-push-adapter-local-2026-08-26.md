@@ -3,8 +3,9 @@
 - Date: 2026-08-26
 - Scope: bounded owner-authenticated HTTP preflight and existing mutation API
   composition
-- Result: implementation, focused tests, full gate, and named dry-runs pass;
-  commit, push, ordinary GitHub Actions, and staging exposure approval remain
+- Result: implementation, focused tests, full gate, named dry-runs, commit
+  `fdfe87b`, push, and ordinary GitHub Actions pass; account-owner staging
+  exposure approval received; approval-record commit and manual deploy remain
   pending
 
 ## Implemented HTTP contract
@@ -82,5 +83,12 @@ called through its binding/RPC surface. The latest observed
 
 ## Remaining gates
 
-- commit, push, and ordinary GitHub Actions confirmation;
-- explicit account-owner approval before staging exposes the new route.
+- commit, push, and ordinary GitHub Actions confirmation for the approval record;
+- one main-only manual staging deployment;
+- automatic credential-free HTTP 401 boundary audit;
+- operator read-only authenticated empty-inventory preflight audit.
+
+The 2026-08-26 approval covers only exposing the owner-authenticated route, the
+automatic unauthenticated HTTP 401 audit, and the operator's read-only
+preflight. It does not authorize artifact/blob/ref/R2/Queue mutation or any
+production change.

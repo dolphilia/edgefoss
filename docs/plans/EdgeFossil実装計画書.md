@@ -683,7 +683,9 @@ P5b1bでは既存のlinear ancestor、部分完了、response-loss retry、完�
 local-only plannerへ追加した。commit `c96ada8`と通常CIが成功したためP5b1bは完了した。P5b2では
 既存owner tokenで保護したbounded HTTP preflight adapterと、既存mutation routeを組み合わせる
 cross-runtime HTTP testをlocal実装した。full local gateとnamed dry-runは成功し、commitと通常CIは
-未確認である。
+`fdfe87b`で成功した。account ownerは新しいowner-only preflight routeのstaging公開、workflow内の
+credential-free HTTP 401 audit、その後のread-only owner preflightまでを明示承認した。manual deployは
+未実行であり、P5b3 remote mutationは未承認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1136,7 +1138,7 @@ P5bは次の順で小さく進める。
 | P5b0 internal push preflight | 完了。commit `d01815e`と通常CI成功を確認 |
 | P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
 | P5b1b incremental push plan | 完了。commit `c96ada8`と通常CI成功を確認 |
-| P5b2 authenticated push adapter | full local gateとnamed dry-run成功。commit/通常CI待ち |
+| P5b2 authenticated push adapter | commit `fdfe87b`/通常CI成功、staging公開承認済み。manual deploy待ち |
 | P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
 
 P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
@@ -1191,8 +1193,10 @@ manual deploy workflowにはcredentialを持たず、不正JSONへのexact HTTP 
 environmentからだけ読み、HELLOで得たprojectへ空inventoryを照合し、snapshotだけを表示する。
 local verificationは
 [`P5b2 local evidence`](../evidence/p5b2-authenticated-public-push-adapter-local-2026-08-26.md)を参照する。
-full local gateとnamed dry-runはgreenである。commit、通常CIの後、新routeのstaging公開効果を別承認し、
-remote writeはさらにP5b3の別承認まで行わない。
+full local gateとnamed dry-run、commit `fdfe87b`、通常CIはgreenである。account ownerは新routeの
+staging公開、credential-free HTTP 401 audit、空inventoryによるread-only owner preflightを明示承認した。
+この承認を記録したcommit/通常CI後、main-only manual workflowを一度実行する。remote writeはさらに
+P5b3の別承認まで行わない。
 
 API原則:
 

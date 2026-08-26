@@ -1014,8 +1014,11 @@ preflight/publish、R2 write、Queue enqueueは行わない。P5b2で認証付�
 - [x] deploy workflowにcredential-freeなHTTP 401境界auditを追加する。
 - [x] tokenをenvironmentからだけ読むread-only owner preflight auditを追加する。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5b2実装をcommitし、通常CIを通す。
-- [ ] commit/通常CI後、新しいpreflight routeのstaging公開効果をaccount ownerが明示承認する。
+- [x] P5b2実装をcommitし、通常CIを通す（commit `fdfe87b`）。
+- [x] commit/通常CI後、新しいpreflight routeのstaging公開効果をaccount ownerが明示承認する。
+- [ ] 承認記録をcommitし、通常CIを通す。
+- [ ] mainの`Deploy staging Worker` workflowを一度実行し、全step成功を確認する。
+- [ ] workflow成功後にread-only owner preflight auditを実行する。
 
 P5b2のlocal実装でユーザが新たに準備するものはない。既存staging Workerにはすでに
 `EDGEFOSS_OWNER_TOKEN`が設定済みであり、新しいsecretやCloudflare resourceを作らない。local testは
@@ -1023,6 +1026,11 @@ fixture tokenとlocal Durable Object/R2だけを使う。commit/通常CI後に�
 新しいowner-only routeが到達可能になる効果である。承認前にdeployしない。承認後の最初のremote確認も
 workflowによるunauthenticated HTTP 401と、ownerが手元のtokenで行うread-only preflightまでに限定し、artifact/blob/
 ref/Queue/R2を変更するpush smokeはP5b3の別承認まで行わない。
+
+2026-08-26、commit `fdfe87b`の通常CI成功後、account ownerは上記staging公開効果を明示承認した。
+承認対象には新routeの到達可能化、credential-freeなHTTP 401 audit、空inventoryのauthenticated
+read-only preflightを含む。artifact upload/finalize、artifact/ref publish、R2 write、Queue enqueue、
+production変更は含まない。承認記録のcommit/通常CIが成功するまではmanual workflowを実行しない。
 
 staging deployとworkflow内のHTTP 401 auditが成功した後、account ownerはrepository rootのterminalで次を
 実行する。tokenをcommand lineへ直接書かず、値を共有・貼付しない。
