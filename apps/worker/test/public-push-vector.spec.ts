@@ -34,12 +34,40 @@ interface PushVector {
       signature_path: string;
     }>;
   };
+  incremental_push: {
+    head_artifact_id: string;
+    files: Record<string, string>;
+    plan: {
+      snapshot: {
+        accepted_sequence: number;
+        missing_artifact_ids: string[];
+        missing_blob_ids: string[];
+        policy_epoch: number;
+        project_id: string;
+        ref_generation: number;
+        ref_target: string;
+      };
+      blobs: [];
+      artifacts: Array<{
+        artifact_id: string;
+        artifact_path: string;
+        expected_policy_epoch: number;
+        kind: "change";
+        operation_id: string;
+        ref: { expected_generation: number; name: "heads/main" };
+        signature_path: string;
+      }>;
+    };
+  };
 }
 
 const vector = rawVector as PushVector;
 
-function bytes(path: string): Uint8Array {
-  const hex = vector.files[path];
+function bytes(
+  path: string,
+  files: Record<string, string> = vector.files,
+): Uint8Array {
+  const hex = files[path];
   if (hex === undefined || hex.length % 2 !== 0) {
     throw new Error(`invalid vector object ${path}`);
   }
@@ -155,6 +183,84 @@ describe("fresh public push cross-runtime plan", () => {
           generation: 1,
           name: "heads/main",
           targetArtifactId: vector.head_artifact_id,
+        },
+      },
+      status: "ok",
+    });
+
+    const incremental = vector.incremental_push;
+    await expect(
+      repository.preflightPublicPush({
+        artifactIds: incremental.plan.snapshot.missing_artifact_ids,
+        blobIds: incremental.plan.snapshot.missing_blob_ids,
+        principalId: "owner",
+        projectId: vector.project_id,
+        protocolVersion: 0,
+        realm: "public",
+      }),
+    ).resolves.toEqual({
+      limits: { maxArtifactIds: 256, maxBlobIds: 256 },
+      missingArtifactIds: incremental.plan.snapshot.missing_artifact_ids,
+      missingBlobIds: [],
+      snapshot: {
+        acceptedSequence: incremental.plan.snapshot.accepted_sequence,
+        policyEpoch: incremental.plan.snapshot.policy_epoch,
+        projectId: incremental.plan.snapshot.project_id,
+        ref: {
+          generation: incremental.plan.snapshot.ref_generation,
+          name: "heads/main",
+          targetArtifactId: incremental.plan.snapshot.ref_target,
+        },
+      },
+      status: "ok",
+    });
+
+    for (const step of incremental.plan.artifacts) {
+      const input: PublishArtifactInput = {
+        artifactBytes: copyBuffer(bytes(step.artifact_path, incremental.files)),
+        artifactId: step.artifact_id,
+        expectedPolicyEpoch: step.expected_policy_epoch,
+        operationId: step.operation_id,
+        principalId: "owner",
+        ref: {
+          expectedGeneration: step.ref.expected_generation,
+          name: step.ref.name,
+        },
+        signatureBytes: copyBuffer(
+          bytes(step.signature_path, incremental.files),
+        ),
+      };
+      const first = await repository.publishArtifact(input);
+      expect(first).toMatchObject({
+        artifactId: step.artifact_id,
+        kind: step.kind,
+        repoSequence: 4,
+        status: "accepted",
+      });
+      await expect(repository.publishArtifact(input)).resolves.toEqual(first);
+    }
+
+    await expect(
+      repository.preflightPublicPush({
+        artifactIds: incremental.plan.snapshot.missing_artifact_ids,
+        blobIds: incremental.plan.snapshot.missing_blob_ids,
+        principalId: "owner",
+        projectId: vector.project_id,
+        protocolVersion: 0,
+        realm: "public",
+      }),
+    ).resolves.toEqual({
+      limits: { maxArtifactIds: 256, maxBlobIds: 256 },
+      missingArtifactIds: [],
+      missingBlobIds: [],
+      snapshot: {
+        acceptedSequence: 4,
+        policyEpoch: 0,
+        projectId: vector.project_id,
+        ref: {
+          generation: 2,
+          name: "heads/main",
+          targetArtifactId: incremental.head_artifact_id,
         },
       },
       status: "ok",

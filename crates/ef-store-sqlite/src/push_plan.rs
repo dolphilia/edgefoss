@@ -69,9 +69,9 @@ pub struct PublicPushArtifactStep {
     pub signature_path: String,
 }
 
-/// A complete bounded mutation plan for one fresh public authority.
+/// A complete bounded mutation plan from one authority observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FreshPublicPushPlan {
+pub struct PublicPushPlan {
     pub artifacts: Vec<PublicPushArtifactStep>,
     pub blobs: Vec<PublicPushBlobStep>,
     pub head_artifact_id: String,
@@ -79,6 +79,9 @@ pub struct FreshPublicPushPlan {
     pub realm: Realm,
     pub semantic_root: String,
 }
+
+/// The P5b1a name for a [`PublicPushPlan`] constrained to a fresh authority.
+pub type FreshPublicPushPlan = PublicPushPlan;
 
 /// Builds a deterministic fresh-authority public push plan from a fully
 /// verified portable bundle and the exact P5b0 preflight observation.
@@ -93,6 +96,31 @@ pub fn plan_fresh_public_push(
     objects: &BTreeMap<String, Vec<u8>>,
     snapshot: &PublicPushPreflightSnapshot,
 ) -> Result<FreshPublicPushPlan, StoreError> {
+    plan_public_push(manifest_bytes, objects, snapshot, true)
+}
+
+/// Builds a deterministic incremental public push plan from a fully verified
+/// bundle and one P5b0 authority observation.
+///
+/// # Errors
+///
+/// Rejects project or inventory inconsistencies and returns
+/// [`StoreError::PushHeadConflict`] when the authority head is not in the local
+/// linear history.
+pub fn plan_incremental_public_push(
+    manifest_bytes: &[u8],
+    objects: &BTreeMap<String, Vec<u8>>,
+    snapshot: &PublicPushPreflightSnapshot,
+) -> Result<PublicPushPlan, StoreError> {
+    plan_public_push(manifest_bytes, objects, snapshot, false)
+}
+
+fn plan_public_push(
+    manifest_bytes: &[u8],
+    objects: &BTreeMap<String, Vec<u8>>,
+    snapshot: &PublicPushPreflightSnapshot,
+    require_fresh: bool,
+) -> Result<PublicPushPlan, StoreError> {
     verify_portable_bundle(manifest_bytes, objects, &[])?;
     let manifest = decode_bundle_manifest(manifest_bytes)?;
     if manifest.realm != Realm::Public {
@@ -101,15 +129,90 @@ pub fn plan_fresh_public_push(
     if manifest.artifacts.len() > MAX_PREFLIGHT_IDS || manifest.blobs.len() > MAX_PREFLIGHT_IDS {
         return Err(invalid("bundle exceeds the fresh preflight bounds"));
     }
-    validate_fresh_snapshot(&manifest.artifacts, &manifest.blobs, snapshot)?;
+    validate_inventory(&manifest.artifacts, &manifest.blobs, snapshot)?;
 
+    let decoded = decode_push_bundle(&manifest, objects)?;
+
+    let head = manifest
+        .refs
+        .iter()
+        .find(|(name, _)| name == "heads/main")
+        .map(|(_, target)| target.clone())
+        .ok_or_else(|| invalid("public heads/main is missing"))?;
+    let tree_order = topological_trees(&decoded.trees)?;
+    let change_order = chronological_changes(&head, &decoded.changes)?;
+    let (change_start, base_generation) = if require_fresh {
+        validate_fresh_snapshot(&manifest.artifacts, &manifest.blobs, snapshot)?;
+        (0, 0)
+    } else {
+        validate_incremental_snapshot(
+            &manifest.project,
+            &decoded.trees,
+            &decoded.changes,
+            &change_order,
+            snapshot,
+        )?
+    };
+    let missing_artifacts = snapshot
+        .missing_artifact_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let missing_blobs = snapshot
+        .missing_blob_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let artifacts = build_artifact_steps(
+        &manifest.project,
+        &tree_order,
+        &change_order[change_start..],
+        base_generation,
+        snapshot,
+        &decoded.signatures,
+    )?;
+    let planned_artifacts = artifacts
+        .iter()
+        .map(|step| step.artifact_id.clone())
+        .collect::<BTreeSet<_>>();
+    if !missing_artifacts.is_subset(&planned_artifacts) {
+        return Err(invalid("missing artifact is outside the mutation suffix"));
+    }
+
+    let blobs = build_blob_steps(
+        &manifest.project,
+        &manifest.blobs,
+        &missing_blobs,
+        objects,
+        snapshot.policy_epoch,
+    )?;
+
+    Ok(PublicPushPlan {
+        artifacts,
+        blobs,
+        head_artifact_id: head,
+        project_id: manifest.project,
+        realm: Realm::Public,
+        semantic_root: manifest.semantic_root,
+    })
+}
+
+struct DecodedPushBundle {
+    changes: BTreeMap<String, ef_format::ChangeArtifact>,
+    signatures: BTreeMap<String, String>,
+    trees: BTreeMap<String, ef_format::TreeArtifact>,
+}
+
+fn decode_push_bundle(
+    manifest: &ef_format::BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<DecodedPushBundle, StoreError> {
     let mut signatures = BTreeMap::new();
     for signature_id in &manifest.signatures {
         let path = bundle_object_path("signatures", signature_id);
         let record = decode_signature_record(&objects[&path])?;
         signatures.insert(record.artifact, path);
     }
-
     let mut trees = BTreeMap::new();
     let mut changes = BTreeMap::new();
     for artifact_id in &manifest.artifacts {
@@ -125,51 +228,73 @@ pub fn plan_fresh_public_push(
             return Err(invalid("verified artifact kind cannot be planned"));
         }
     }
+    Ok(DecodedPushBundle {
+        changes,
+        signatures,
+        trees,
+    })
+}
 
-    let head = manifest
-        .refs
+fn build_artifact_steps(
+    project_id: &str,
+    tree_order: &[String],
+    remaining_changes: &[String],
+    base_generation: u64,
+    snapshot: &PublicPushPreflightSnapshot,
+    signatures: &BTreeMap<String, String>,
+) -> Result<Vec<PublicPushArtifactStep>, StoreError> {
+    let missing = snapshot
+        .missing_artifact_ids
         .iter()
-        .find(|(name, _)| name == "heads/main")
-        .map(|(_, target)| target.clone())
-        .ok_or_else(|| invalid("public heads/main is missing"))?;
-    let tree_order = topological_trees(&trees)?;
-    let change_order = chronological_changes(&head, &changes)?;
-    let mut artifacts = Vec::with_capacity(manifest.artifacts.len());
-    artifacts.push(artifact_step(
-        &manifest.project,
-        PublicPushArtifactKind::ProjectGenesis,
-        None,
-        &manifest.project,
-        snapshot.policy_epoch,
-        &signatures,
-    )?);
-    for artifact_id in tree_order {
-        artifacts.push(artifact_step(
-            &artifact_id,
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut steps = Vec::new();
+    if missing.contains(project_id) {
+        steps.push(artifact_step(
+            project_id,
+            PublicPushArtifactKind::ProjectGenesis,
+            None,
+            project_id,
+            snapshot.policy_epoch,
+            signatures,
+        )?);
+    }
+    for artifact_id in tree_order.iter().filter(|id| missing.contains(*id)) {
+        steps.push(artifact_step(
+            artifact_id,
             PublicPushArtifactKind::Tree,
             None,
-            &manifest.project,
+            project_id,
             snapshot.policy_epoch,
-            &signatures,
+            signatures,
         )?);
     }
-    for (expected_generation, artifact_id) in change_order.into_iter().enumerate() {
-        artifacts.push(artifact_step(
-            &artifact_id,
+    for (offset, artifact_id) in remaining_changes.iter().enumerate() {
+        let expected_generation = base_generation
+            .checked_add(u64::try_from(offset).map_err(|_| invalid("generation overflow"))?)
+            .ok_or_else(|| invalid("generation overflow"))?;
+        steps.push(artifact_step(
+            artifact_id,
             PublicPushArtifactKind::Change,
-            Some(u64::try_from(expected_generation).map_err(|_| invalid("generation overflow"))?),
-            &manifest.project,
+            Some(expected_generation),
+            project_id,
             snapshot.policy_epoch,
-            &signatures,
+            signatures,
         )?);
     }
-    if artifacts.len() != manifest.artifacts.len() {
-        return Err(invalid("artifact plan is not the exact bundle inventory"));
-    }
+    Ok(steps)
+}
 
-    let blobs = manifest
-        .blobs
+fn build_blob_steps(
+    project_id: &str,
+    blob_ids: &[String],
+    missing: &BTreeSet<String>,
+    objects: &BTreeMap<String, Vec<u8>>,
+    policy_epoch: u64,
+) -> Result<Vec<PublicPushBlobStep>, StoreError> {
+    blob_ids
         .iter()
+        .filter(|blob_id| missing.contains(*blob_id))
         .map(|blob_id| {
             let object_path = bundle_object_path("blobs", blob_id);
             let byte_size = u64::try_from(objects[&object_path].len())
@@ -180,24 +305,40 @@ pub fn plan_fresh_public_push(
                 object_path,
                 operation_id: operation_id(&[
                     "upload",
-                    &manifest.project,
+                    project_id,
                     "public",
                     blob_id,
                     &byte_size.to_string(),
-                    &snapshot.policy_epoch.to_string(),
+                    &policy_epoch.to_string(),
                 ]),
             })
         })
-        .collect::<Result<Vec<_>, StoreError>>()?;
+        .collect()
+}
 
-    Ok(FreshPublicPushPlan {
-        artifacts,
-        blobs,
-        head_artifact_id: head,
-        project_id: manifest.project,
-        realm: Realm::Public,
-        semantic_root: manifest.semantic_root,
-    })
+fn validate_inventory(
+    artifact_ids: &[String],
+    blob_ids: &[String],
+    snapshot: &PublicPushPreflightSnapshot,
+) -> Result<(), StoreError> {
+    validate_missing_ids(&snapshot.missing_artifact_ids, artifact_ids)?;
+    validate_missing_ids(&snapshot.missing_blob_ids, blob_ids)?;
+    if snapshot.ref_generation.is_some() != snapshot.ref_target.is_some() {
+        return Err(invalid("ref target and generation presence differ"));
+    }
+    Ok(())
+}
+
+fn validate_missing_ids(missing: &[String], inventory: &[String]) -> Result<(), StoreError> {
+    if missing.len() > MAX_PREFLIGHT_IDS
+        || missing.windows(2).any(|pair| pair[0] >= pair[1])
+        || missing
+            .iter()
+            .any(|candidate| inventory.binary_search(candidate).is_err())
+    {
+        return Err(invalid("preflight missing inventory is invalid"));
+    }
+    Ok(())
 }
 
 fn validate_fresh_snapshot(
@@ -217,6 +358,116 @@ fn validate_fresh_snapshot(
         return Err(invalid("preflight inventory does not match the bundle"));
     }
     Ok(())
+}
+
+fn validate_incremental_snapshot(
+    project_id: &str,
+    trees: &BTreeMap<String, ef_format::TreeArtifact>,
+    changes: &BTreeMap<String, ef_format::ChangeArtifact>,
+    change_order: &[String],
+    snapshot: &PublicPushPreflightSnapshot,
+) -> Result<(usize, u64), StoreError> {
+    let missing_artifacts = snapshot
+        .missing_artifact_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let missing_blobs = snapshot
+        .missing_blob_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    match snapshot.project_id.as_deref() {
+        None => {
+            if snapshot.accepted_sequence != 0
+                || snapshot.policy_epoch != 0
+                || snapshot.ref_target.is_some()
+                || !missing_artifacts.contains(project_id)
+            {
+                return Err(invalid("uninitialized authority snapshot is inconsistent"));
+            }
+            Ok((0, 0))
+        }
+        Some(stored_project) => {
+            if snapshot.accepted_sequence == 0 {
+                return Err(invalid("initialized authority sequence is zero"));
+            }
+            if stored_project != project_id {
+                return Err(invalid("authority project differs from the bundle"));
+            }
+            if missing_artifacts.contains(project_id) {
+                return Err(invalid("initialized authority reports genesis missing"));
+            }
+            let Some(remote_head) = snapshot.ref_target.as_deref() else {
+                return Ok((0, 0));
+            };
+            let remote_index = change_order
+                .iter()
+                .position(|candidate| candidate == remote_head)
+                .ok_or_else(|| StoreError::PushHeadConflict(remote_head.to_owned()))?;
+            let change_start = remote_index + 1;
+            let (prefix_artifacts, prefix_blobs) =
+                accepted_prefix(project_id, trees, changes, &change_order[..change_start])?;
+            if !missing_artifacts.is_disjoint(&prefix_artifacts)
+                || !missing_blobs.is_disjoint(&prefix_blobs)
+            {
+                return Err(invalid(
+                    "authority head prefix reports a reachable object missing",
+                ));
+            }
+            Ok((
+                change_start,
+                snapshot
+                    .ref_generation
+                    .ok_or_else(|| invalid("remote ref generation is missing"))?,
+            ))
+        }
+    }
+}
+
+fn accepted_prefix(
+    project_id: &str,
+    trees: &BTreeMap<String, ef_format::TreeArtifact>,
+    changes: &BTreeMap<String, ef_format::ChangeArtifact>,
+    accepted_changes: &[String],
+) -> Result<(BTreeSet<String>, BTreeSet<String>), StoreError> {
+    fn collect_tree(
+        id: &str,
+        trees: &BTreeMap<String, ef_format::TreeArtifact>,
+        artifacts: &mut BTreeSet<String>,
+        blobs: &mut BTreeSet<String>,
+    ) -> Result<(), StoreError> {
+        if !artifacts.insert(id.to_owned()) {
+            return Ok(());
+        }
+        let tree = trees
+            .get(id)
+            .ok_or_else(|| invalid("accepted prefix tree is absent"))?;
+        for entry in &tree.entries {
+            match entry.mode {
+                ef_format::TreeEntryMode::Directory => {
+                    collect_tree(&entry.target, trees, artifacts, blobs)?;
+                }
+                ef_format::TreeEntryMode::Symlink => {}
+                ef_format::TreeEntryMode::File | ef_format::TreeEntryMode::Executable => {
+                    blobs.insert(entry.target.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let mut artifacts = BTreeSet::from([project_id.to_owned()]);
+    let mut blobs = BTreeSet::new();
+    for change_id in accepted_changes {
+        artifacts.insert(change_id.clone());
+        let change = changes
+            .get(change_id)
+            .ok_or_else(|| invalid("accepted prefix change is absent"))?;
+        collect_tree(&change.root, trees, &mut artifacts, &mut blobs)?;
+    }
+    Ok((artifacts, blobs))
 }
 
 fn topological_trees(

@@ -2,8 +2,8 @@
 
 - Date: 2026-08-26
 - Scope: verified local bundle to deterministic fresh-authority mutation plan
-- Result: local implementation, cross-runtime execution, full gate, and named
-  dry-runs pass; commit, push, and ordinary GitHub Actions remain pending
+- Result: local implementation, cross-runtime execution, full gate, named
+  dry-runs, commit `80dfc37`, push, and ordinary GitHub Actions pass
 
 ## Implemented contract
 

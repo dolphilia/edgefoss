@@ -1,10 +1,13 @@
 # EdgeFossil experimental public push plan v0
 
-Profile identifier: `edgefossil-public-push-fresh-v0`
+Profile identifiers:
 
-Status: experimental candidate. This first profile converts one verified
-complete public bundle and one exact fresh-authority preflight into a bounded,
-deterministic mutation plan. It is not the HTTP wire format.
+- `edgefossil-public-push-fresh-v0`
+- `edgefossil-public-push-linear-v0`
+
+Status: experimental candidate. These profiles convert one verified complete
+public bundle and one exact authority preflight into a bounded, deterministic
+mutation plan. They are not the HTTP wire format.
 
 ## Required inputs
 
@@ -18,6 +21,26 @@ planning. The P5b0 authority snapshot MUST have:
 
 Any difference is `invalid_push_plan`. A preflight result is an observation,
 not a lease; every mutation remains subject to server-side validation.
+
+## Linear incremental inputs
+
+The `linear-v0` profile accepts the same verified public bundle and bounds. The
+snapshot MUST describe exactly one of these states:
+
+- uninitialized: sequence and policy epoch zero, null project/ref, and genesis
+  missing;
+- initialized without a public ref: nonzero accepted sequence, matching
+  project, null ref target and generation, and genesis not missing;
+- initialized with a public ref: matching project and a target present in the
+  bundle's exact oldest-to-newest `heads/main` ancestry, with nonzero accepted
+  sequence.
+
+Missing inventories MUST be sorted, unique subsets of the bundle inventory.
+For an existing ref, no artifact or blob reachable from the accepted history
+prefix may be reported missing. Such a contradiction is `invalid_push_plan`.
+An authority ref target outside the local linear history is
+`push_head_conflict`; the planner MUST NOT guess, force-push, merge, or apply
+last-writer-wins.
 
 ## Mutation order
 
@@ -34,6 +57,14 @@ expected generation by one. Genesis and trees carry no ref mutation.
 
 Blob upload/finalization MUST complete before the first artifact that references
 the blob. Artifact and signature paths MUST be exact inventoried bundle paths.
+
+For `linear-v0`, the planner omits blobs and non-change artifacts not reported
+missing. It emits every change strictly after the observed authority head,
+including an already-present artifact when ref advancement may still need to
+resume. The first emitted change uses the observed ref generation; later
+changes increment it by one. With no ref, the full change history starts at
+generation zero. If the authority head equals the bundle head and nothing is
+missing, the valid result is an empty mutation plan.
 
 ## Deterministic operation IDs
 
@@ -66,10 +97,12 @@ retrying an uncertain response.
 
 ## Scope and non-claims
 
-This profile supports only a fresh single-project public authority. It does not
-plan incremental push, a nonzero policy epoch, members data, pagination, merge
-history, concurrent ref advancement, HTTP authentication, or automatic conflict
-resolution. A later profile is required for those cases.
+These profiles support only one bounded, single-project, public, linear history.
+They do not plan members data, pagination, merge history, concurrent ref
+advancement, HTTP authentication, force push, or automatic conflict resolution.
+The fresh profile additionally requires policy epoch zero. The linear profile
+preserves the observed policy epoch in every publish operation and relies on
+the authority to reject a stale epoch at mutation time.
 
 The upload operation ID includes the observed policy epoch, but the existing
 P4 upload API does not itself grant a policy lease. A policy change or publish
@@ -79,6 +112,7 @@ visible and is handled by later garbage collection.
 ## Shared vector
 
 [`vectors/public-clone-v0.json`](vectors/public-clone-v0.json) contains
-`fresh_push_plan`. TypeScript deterministically regenerates the bundle and plan;
-the Rust planner MUST independently reproduce every step and operation ID; the
-Workers runtime MUST execute the committed plan with exact retry convergence.
+`fresh_push_plan` and a one-change `incremental_push`. TypeScript
+deterministically regenerates both bundles and plans; the Rust planner MUST
+independently reproduce every step and operation ID; the Workers runtime MUST
+execute the committed plans with exact retry convergence.

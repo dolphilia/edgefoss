@@ -189,6 +189,91 @@ async function main(): Promise<void> {
     ],
     artifacts: freshPushArtifacts,
   };
+  const nextChange = await signed(
+    encodeChange({
+      actorKey,
+      createdAt: "2026-08-26T12:00:03Z",
+      logicalClock: 1n,
+      message: "incremental push fixture",
+      parents: [change.id],
+      project: genesis.id,
+      realm: "public",
+      root: tree.id,
+    }),
+  );
+  const incrementalArtifacts = [...artifacts, nextChange];
+  const incrementalArtifactIds = incrementalArtifacts
+    .map(({ id }) => id)
+    .sort();
+  const incrementalSignatureIds = incrementalArtifacts
+    .map(({ signatureId }) => signatureId)
+    .sort();
+  const incrementalSemantic = await computeSemanticRoot({
+    artifacts: incrementalArtifactIds.map((id) => ({ id, realm: "public" })),
+    policyVersion: 0n,
+    project: genesis.id,
+    realm: "public",
+    refs: [{ name: "heads/main", realm: "public", target: nextChange.id }],
+  });
+  const incrementalManifest = await encodeBundleManifest({
+    artifacts: incrementalArtifactIds,
+    baseRoots: new Map(),
+    blobs: [blobId],
+    policyVersion: 0n,
+    project: genesis.id,
+    realm: "public",
+    refs: new Map([["heads/main", nextChange.id]]),
+    semanticRoot: incrementalSemantic.semanticRoot,
+    signatures: incrementalSignatureIds,
+  });
+  const incrementalFiles = Object.fromEntries(
+    [
+      ...incrementalArtifacts.map(({ body, id }) => [
+        `artifacts/${id.slice(7)}.cbor`,
+        toHex(body),
+      ]),
+      [`blobs/${blobId.slice(7)}.bin`, toHex(blob)],
+      ...incrementalArtifacts.map(({ record, signatureId }) => [
+        `signatures/${signatureId.slice(7)}.cbor`,
+        toHex(record),
+      ]),
+    ].sort(([left], [right]) => left.localeCompare(right)),
+  );
+  const incrementalPush = {
+    head_artifact_id: nextChange.id,
+    manifest_cbor_hex: toHex(incrementalManifest),
+    files: incrementalFiles,
+    plan: {
+      snapshot: {
+        accepted_sequence: 3,
+        missing_artifact_ids: [nextChange.id],
+        missing_blob_ids: [],
+        policy_epoch: 0,
+        project_id: genesis.id,
+        ref_generation: 1,
+        ref_target: change.id,
+      },
+      blobs: [],
+      artifacts: [
+        {
+          artifact_id: nextChange.id,
+          artifact_path: `artifacts/${nextChange.id.slice(7)}.cbor`,
+          expected_policy_epoch: 0,
+          kind: "change",
+          operation_id: await operationId([
+            "publish",
+            genesis.id,
+            "public",
+            nextChange.id,
+            "0",
+            "1",
+          ]),
+          ref: { expected_generation: 1, name: "heads/main" },
+          signature_path: `signatures/${nextChange.signatureId.slice(7)}.cbor`,
+        },
+      ],
+    },
+  };
   const output = `${JSON.stringify(
     {
       profile: "edgefossil-public-clone-v0",
@@ -198,6 +283,7 @@ async function main(): Promise<void> {
       ref_generation: 1,
       publish_order: artifacts.map(({ id }) => id),
       fresh_push_plan: freshPushPlan,
+      incremental_push: incrementalPush,
       manifest_cbor_hex: toHex(manifest),
       files,
     },

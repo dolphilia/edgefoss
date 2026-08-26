@@ -48,5 +48,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0042](0042-opaque-public-transfer-grant-and-resumable-http-adapter.md) | Expose clone transfer with an opaque bounded grant  | Accepted for P5a2c local         |
 | [0043](0043-bounded-internal-public-push-preflight.md)                  | Preflight push against one authority snapshot       | Accepted for P5b0 local          |
 | [0044](0044-deterministic-fresh-public-push-plan.md)                    | Derive deterministic fresh public push plan         | Accepted for P5b1a local         |
+| [0045](0045-deterministic-linear-public-push-resume.md)                 | Resume push along known linear ancestry             | Accepted for P5b1b local         |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

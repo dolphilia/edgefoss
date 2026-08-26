@@ -979,11 +979,28 @@ P5b0はlocal-onlyで、既存のCloudflare resourceや`EDGEFOSS_OWNER_TOKEN`も�
 - [x] nonfresh/incomplete preflightをmutation前に拒否する。
 - [x] HTTP、schema、binding、secret、R2/Queue、staging/productionを変更しない。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5b1a実装をcommitし、通常CIを通す。
+- [x] P5b1a実装をcommitし、通常CIを通す（commit `80dfc37`）。
 
 P5b1aのWorkers runtime testが使うR2/DOはlocal test環境だけであり、Cloudflare account上のresourceでは
 ない。owner token、signing key、API tokenの新規作成や入力は不要である。P5b1bのincremental planも
 まずlocal-onlyで進め、実staging writeはP5b3の別承認まで行わない。
+
+### P5b1b linear incremental push planで行う
+
+- [x] 既存headがlocal linear historyの祖先ならstrict suffixだけを計画する。
+- [x] blob完了後、ref作成前、既存head、完全収束からの再開を区別する。
+- [x] 同じsnapshotのresponse-loss retryで同じoperation IDを再構築する。
+- [x] 未知または分岐headをstable conflictにし、force push/LWWを行わない。
+- [x] accepted prefixからreachableなobjectのmissing報告を不整合として拒否する。
+- [x] TypeScript/Rust/Workersの二change vectorでsequence 4、ref generation 2までlocal検証する。
+- [x] HTTP、schema、binding、secret、R2/Queue、staging/productionを変更しない。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5b1b実装をcommitし、通常CIを通す。
+
+P5b1bでユーザが準備・取得・設定するものはない。テストはlocal Durable Object/R2だけを使い、既存の
+`EDGEFOSS_OWNER_TOKEN`やCloudflare API tokenも入力しない。Dashboard操作、manual deploy、remote
+preflight/publish、R2 write、Queue enqueueは行わない。P5b2で認証付きHTTP surfaceを追加する前に
+公開・認証境界を再レビューし、P5b3のstaging mutationは具体的効果を示した別の明示承認後に限る。
 
 ### 必要になった時だけ行う
 

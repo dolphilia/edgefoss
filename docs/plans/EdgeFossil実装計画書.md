@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 34（P5b1a fresh public push planを具体化）
+改訂: Revision 35（P5b1b linear incremental push planを具体化）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -678,7 +678,9 @@ RepositoryDO internal RPCとして実装した。local bundle inventoryに対す
 schema、binding、credential、R2/Queue、remote stateは不変である。commit `d01815e`と通常CIが
 成功したためP5b0は完了した。P5b1aではverified public bundleとfresh preflightから、決定的な
 blob/artifact/ref mutation planをRustで生成し、同じvectorをWorkers runtimeで実行するlocal-only
-cross-runtime契約を実装した。commitと通常CIは未確認である。
+cross-runtime契約を実装した。commit `80dfc37`と通常CIが成功したためP5b1aは完了した。
+P5b1bでは既存のlinear ancestor、部分完了、response-loss retry、完全収束、未知head競合を
+local-only plannerへ追加した。full local gateとnamed dry-runは成功し、commitと通常CIは未確認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1129,8 +1131,8 @@ P5bは次の順で小さく進める。
 | increment | 完了状態 |
 |---|---|
 | P5b0 internal push preflight | 完了。commit `d01815e`と通常CI成功を確認 |
-| P5b1a fresh cross-runtime push plan | full local gateとnamed dry-run成功。commit/通常CI待ち |
-| P5b1b incremental push plan | 未着手。既存head、resume、conflictを扱う |
+| P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
+| P5b1b incremental push plan | full local gateとnamed dry-run成功。commit/通常CI待ち |
 | P5b2 authenticated push adapter | 未着手。既存owner secretでHTTP negotiation/orchestration |
 | P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
 
@@ -1156,7 +1158,20 @@ project/ref null、sequence/policy epoch 0、全object missingのfresh preflight
 credential、remote R2/Queue、staging/productionは変更しない。incremental authorityはP5b1bまで
 明示的に非対応とする。local verificationは
 [`P5b1a local evidence`](../evidence/p5b1a-fresh-public-push-plan-local-2026-08-26.md)を参照する。
-full local gateとnamed staging/production dry-runはgreenであり、commitと通常CIは未確認である。
+full local gateとnamed staging/production dry-run、commit `80dfc37`、通常CIはgreenであり、P5b1aは
+完了した。
+
+P5b1bでは[`ADR 0045`](../adr/0045-deterministic-linear-public-push-resume.md)に従い、同じverified
+bundleとbounded preflightから、authorityの既存public headがlocal linear history上の祖先である場合だけ
+strict suffixを計画する。project初期化前、blob完了後、genesis/tree受理後、既存head、完全収束を明示的に
+区別する。既存headからreachableなobjectをauthorityがmissingと報告すればsnapshot不整合として
+mutation前に拒否し、local historyにないheadは`PushHeadConflict`としてforce pushやLWWを行わない。
+ref CASは観測したgenerationから始め、response loss時も同じsnapshotから同じoperation IDを再構築する。
+TypeScriptの二change vectorをRustが独立再現し、Workers runtimeはfresh planに続けてincremental suffixを
+実行し、exact retry、最終sequence 4/ref generation 2を確認する。HTTP route、schema、binding、secret、
+R2/Queue設定、staging/productionは変更しない。local verificationは
+[`P5b1b local evidence`](../evidence/p5b1b-incremental-public-push-plan-local-2026-08-26.md)を参照する。
+full local gateとnamed staging/production dry-runはgreenであり、commitと通常CIを完了条件とする。
 
 API原則:
 

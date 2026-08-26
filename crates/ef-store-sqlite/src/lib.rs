@@ -24,7 +24,8 @@ mod push_plan;
 
 pub use push_plan::{
     FreshPublicPushPlan, PublicPushArtifactKind, PublicPushArtifactStep, PublicPushBlobStep,
-    PublicPushPreflightSnapshot, PublicPushRefStep, plan_fresh_public_push,
+    PublicPushPlan, PublicPushPreflightSnapshot, PublicPushRefStep, plan_fresh_public_push,
+    plan_incremental_public_push,
 };
 
 const SCHEMA_VERSION: i64 = 4;
@@ -91,6 +92,7 @@ pub enum StoreError {
     InvalidBundle(String),
     InvalidImport(String),
     InvalidPushPlan(String),
+    PushHeadConflict(String),
     RefConflict(String),
     Corrupt(String),
 }
@@ -112,6 +114,9 @@ impl fmt::Display for StoreError {
             Self::InvalidBundle(message) => write!(formatter, "invalid bundle: {message}"),
             Self::InvalidImport(message) => write!(formatter, "invalid import: {message}"),
             Self::InvalidPushPlan(message) => write!(formatter, "invalid push plan: {message}"),
+            Self::PushHeadConflict(target) => {
+                write!(formatter, "push head conflict: remote target {target}")
+            }
             Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
@@ -133,6 +138,7 @@ impl Error for StoreError {
             | Self::InvalidBundle(_)
             | Self::InvalidImport(_)
             | Self::InvalidPushPlan(_)
+            | Self::PushHeadConflict(_)
             | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }
