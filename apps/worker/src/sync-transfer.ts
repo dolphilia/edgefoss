@@ -164,6 +164,14 @@ export async function readPublicArtifactTransfer(
       signatureBytes,
     });
   }
+  const policyEpochAfterCrypto = metaInteger(sql, "policy_epoch");
+  if (input.snapshot.policyEpoch !== policyEpochAfterCrypto) {
+    return {
+      code: "snapshot_stale",
+      currentPolicyEpoch: policyEpochAfterCrypto,
+      status: "rejected",
+    };
+  }
   return { items, status: "ok" };
 }
 

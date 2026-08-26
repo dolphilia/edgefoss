@@ -14,8 +14,11 @@ import type { PublishArtifactKind } from "./artifact-publish.js";
 import type { PublicInventoryAnchorV0 } from "./sync-inventory.js";
 import {
   beginPublicTransfer,
+  readPublicArtifactTransfer,
   validPublicTransferSnapshot,
   type BeginPublicTransferInput,
+  type PublicArtifactTransferInput,
+  type PublicArtifactTransferResult,
 } from "./sync-transfer.js";
 
 export const MAX_PUBLIC_CLONE_ARTIFACTS = 128;
@@ -82,6 +85,10 @@ export type PublicBlobChunkResult =
       currentPolicyEpoch: number;
       status: "rejected";
     };
+
+export interface PublicCloneArtifactTransferInput extends PublicArtifactTransferInput {
+  headArtifactId: string;
+}
 
 interface CloneArtifactRow extends Record<string, SqlStorageValue> {
   actor_key: ArrayBuffer;
@@ -329,6 +336,29 @@ export async function readPublicBlobChunk(
     },
     status: "ok",
   };
+}
+
+export async function readPublicCloneArtifactTransfer(
+  sql: SqlStorage,
+  input: PublicCloneArtifactTransferInput,
+): Promise<PublicArtifactTransferResult> {
+  if (!/^sha256:[0-9a-f]{64}$/u.test(input.headArtifactId)) {
+    return { code: "request_invalid", status: "rejected" };
+  }
+  const transferred = await readPublicArtifactTransfer(sql, input);
+  if (transferred.status === "rejected") return transferred;
+  const closure = capturePublicClosure(
+    sql,
+    input.snapshot,
+    input.headArtifactId,
+  );
+  if (
+    closure === "too_large" ||
+    input.artifactIds.some((id) => !closure.artifacts.has(id))
+  ) {
+    return { code: "artifact_unavailable", status: "rejected" };
+  }
+  return transferred;
 }
 
 function capturePublicClosure(

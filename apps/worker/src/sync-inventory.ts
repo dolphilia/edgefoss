@@ -26,7 +26,15 @@ export type SyncHelloResult =
           ordering: "artifact_id_asc";
           maxPageItems: number;
         };
-        phases: readonly ["HELLO", "INVENTORY"];
+        phases: readonly ["HELLO", "INVENTORY", "TRANSFER"];
+        transfer: {
+          grant: "opaque";
+          grantTtlSeconds: 600;
+          maxArtifactBytes: 2_097_152;
+          maxArtifactItems: 16;
+          maxBlobChunkBytes: 1_048_576;
+          profiles: readonly ["complete"];
+        };
       };
       principalId: "anonymous";
       projectId: string;
@@ -145,7 +153,15 @@ export function negotiatePublicSync(
         maxPageItems: MAX_INVENTORY_PAGE_ITEMS,
         ordering: "artifact_id_asc",
       },
-      phases: ["HELLO", "INVENTORY"],
+      phases: ["HELLO", "INVENTORY", "TRANSFER"],
+      transfer: {
+        grant: "opaque",
+        grantTtlSeconds: 600,
+        maxArtifactBytes: 2_097_152,
+        maxArtifactItems: 16,
+        maxBlobChunkBytes: 1_048_576,
+        profiles: ["complete"],
+      },
     },
     principalId: "anonymous",
     projectId,
@@ -238,11 +254,11 @@ export async function openPublicInventoryCursor(
   if (token.length > MAX_CURSOR_TOKEN_CHARACTERS || encoded.length === 0) {
     return { code: "cursor_invalid", status: "rejected" };
   }
-  const sealed = decodeCanonicalBase64Url(encoded);
+  const sealed = decodeSyncTokenBase64Url(encoded);
   if (sealed === null || sealed.byteLength <= CURSOR_NONCE_BYTES + 16) {
     return { code: "cursor_invalid", status: "rejected" };
   }
-  const key = await importCursorKey(sql, false);
+  const key = await importSyncTokenKey(sql, false);
   if (key === null) {
     return { code: "cursor_invalid", status: "rejected" };
   }
@@ -284,7 +300,7 @@ export async function sealPublicInventoryCursor(
   if (!Number.isSafeInteger(expiresAt)) {
     throw new Error("cursor_expiry_invalid");
   }
-  const key = await importCursorKey(sql, true);
+  const key = await importSyncTokenKey(sql, true);
   if (key === null) throw new Error("cursor_key_unavailable");
   const nonce = crypto.getRandomValues(new Uint8Array(CURSOR_NONCE_BYTES));
   const plaintext = new TextEncoder().encode(
@@ -302,7 +318,7 @@ export async function sealPublicInventoryCursor(
   const sealed = new Uint8Array(nonce.byteLength + ciphertext.byteLength);
   sealed.set(nonce);
   sealed.set(new Uint8Array(ciphertext), nonce.byteLength);
-  return `${CURSOR_PREFIX}${encodeBase64Url(sealed)}`;
+  return `${CURSOR_PREFIX}${encodeSyncTokenBase64Url(sealed)}`;
 }
 
 function validHelloInput(input: SyncHelloInput): boolean {
@@ -367,7 +383,7 @@ function parseCursorEnvelope(bytes: ArrayBuffer): CursorEnvelopeV0 | null {
   }
   const envelope = parsed as Record<string, unknown>;
   if (
-    !hasExactKeys(envelope, ["anchor", "expiresAt", "version"]) ||
+    !hasExactSyncTokenKeys(envelope, ["anchor", "expiresAt", "version"]) ||
     envelope.version !== SYNC_PROTOCOL_VERSION ||
     !Number.isSafeInteger(envelope.expiresAt) ||
     (envelope.expiresAt as number) < 0 ||
@@ -382,7 +398,7 @@ function parseCursorEnvelope(bytes: ArrayBuffer): CursorEnvelopeV0 | null {
   };
 }
 
-async function importCursorKey(
+export async function importSyncTokenKey(
   sql: SqlStorage,
   create: boolean,
 ): Promise<CryptoKey | null> {
@@ -397,12 +413,12 @@ async function importCursorKey(
     sql.exec(
       "INSERT INTO edgefoss_meta (key, value) VALUES (?, ?)",
       CURSOR_KEY_META,
-      encodeBase64Url(bytes),
+      encodeSyncTokenBase64Url(bytes),
     );
-    row = { value: encodeBase64Url(bytes) };
+    row = { value: encodeSyncTokenBase64Url(bytes) };
   }
   if (row === undefined) return null;
-  const bytes = decodeCanonicalBase64Url(row.value);
+  const bytes = decodeSyncTokenBase64Url(row.value);
   if (bytes === null || bytes.byteLength !== CURSOR_KEY_BYTES) {
     throw new Error("cursor_key_corrupt");
   }
@@ -412,7 +428,10 @@ async function importCursorKey(
   ]);
 }
 
-function hasExactKeys(input: object, expected: readonly string[]): boolean {
+export function hasExactSyncTokenKeys(
+  input: object,
+  expected: readonly string[],
+): boolean {
   const actual = Object.keys(input).sort();
   const sortedExpected = [...expected].sort();
   return (
@@ -421,7 +440,7 @@ function hasExactKeys(input: object, expected: readonly string[]): boolean {
   );
 }
 
-function encodeBase64Url(bytes: Uint8Array): string {
+export function encodeSyncTokenBase64Url(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -432,7 +451,7 @@ function encodeBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/u, "");
 }
 
-function decodeCanonicalBase64Url(value: string): ArrayBuffer | null {
+export function decodeSyncTokenBase64Url(value: string): ArrayBuffer | null {
   if (
     value.length === 0 ||
     !/^[A-Za-z0-9_-]+$/u.test(value) ||
@@ -446,7 +465,7 @@ function decodeCanonicalBase64Url(value: string): ArrayBuffer | null {
     const bytes = Uint8Array.from(binary, (character) =>
       character.charCodeAt(0),
     );
-    return encodeBase64Url(bytes) === value ? bytes.buffer : null;
+    return encodeSyncTokenBase64Url(bytes) === value ? bytes.buffer : null;
   } catch {
     return null;
   }

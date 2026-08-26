@@ -1,8 +1,8 @@
 # EdgeFossil 実装計画書
 
 作成日: 2026-08-24  
-最終レビュー: 2026-08-25
-改訂: Revision 27（P5a2b2 cross-runtime clone importを反映）
+最終レビュー: 2026-08-26
+改訂: Revision 28（P5a2c opaque public transfer adapterを反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -663,7 +663,10 @@ internal RPCとしてlocal実装し、commit `b55d365`と通常CIまで成功し
 closure、canonical manifest、bounded R2 blob chunkをlocal実装し、full local gateとnamed
 staging/production dry-run、commit `bee3d69`、通常CIまでgreenである。P5a2b2では
 deterministicな署名付きWorker clone vectorとRust fresh import/identical re-exportをlocal実装し、
-full local gateとnamed staging/production dry-runはgreenである。
+full local gate、named staging/production dry-run、commit `f13d705`、通常CIまでgreenである。
+P5a2cでは600秒のopaque grantとanonymous plan/artifact/blob range HTTP adapterをlocal実装した。
+reachable public closureとpolicy epochへbindし、再送・中断再開をserver sessionなしで成立させる。
+remote deployはまだ行わず、local gateと通常CIの後にもaccount ownerの公開効果承認を必要とする。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -983,7 +986,7 @@ P5aはさらに小さく分割する。
 |---|---|
 | P5a0 internal public inventory | 完了。commit `2d088fc`と通常CI成功を確認 |
 | P5a1 external read adapter | 完了。commit `58c8c3a`をstagingへdeployし、schema 5 healthとanonymous HELLOがgreen |
-| P5a2 transfer/import | P5a2b1完了。P5a2b2 cross-runtime importをlocal実装 |
+| P5a2 transfer/import | P5a2b2完了。P5a2c external adapterをlocal実装 |
 
 P5a0 local実行状況（2026-08-25）: [`ADR 0037`](../adr/0037-internal-public-sync-inventory-snapshot.md)で
 anonymous public viewだけのprotocol 0 `HELLO`とpaged `INVENTORY`をinternal RPCとして固定した。
@@ -1030,8 +1033,8 @@ P5a2はさらに次の順で分割する。
 |---|---|
 | P5a2a internal artifact transfer | 完了。commit `b55d365`と通常CI成功を確認 |
 | P5a2b1 closure/blob/manifest | 完了。commit `bee3d69`と通常CI成功を確認 |
-| P5a2b2 cross-runtime import | local実装とfull gate完了。commit、通常CI待ち |
-| P5a2c external transfer adapter | 未着手。opaque token、HTTP、disconnect resume、staging gate |
+| P5a2b2 cross-runtime import | 完了。commit `f13d705`と通常CI成功を確認 |
+| P5a2c external transfer adapter | local実装とfull gate完了。commit、通常CI待ち |
 
 P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
 空のinternal snapshot anchorと、sorted/uniqueなbounded WANTを受けるRepositoryDO RPCを追加した。
@@ -1063,9 +1066,27 @@ importしてgeneration 1とbyte-identical re-exportを確認する。破損入�
 Rust importerと同じsingle-actor、tree clock 0、zero-based contiguous linear changeを事前確認する。
 対応外のaccepted historyはdownload後ではなく`clone_profile_unsupported`で早期に拒否する。
 詳細は[`P5a2b2 local evidence`](../evidence/p5a2b2-cross-runtime-public-clone-local-2026-08-26.md)を
-参照する。full local gateとnamed staging/production dry-runはgreenである。次gateはcommitと
-通常CIである。
-その後P5a2cでopaque external grantとHTTP resume adapterを別の公開効果gateとして設計する。
+参照する。full local gate、named staging/production dry-run、commit `f13d705`、通常CIはgreenであり、
+P5a2b2は完了した。
+
+P5a2cでは[`ADR 0042`](../adr/0042-opaque-public-transfer-grant-and-resumable-http-adapter.md)に従い、
+既存`sync_cursor_key_v0`をtransfer専用AADで再利用する600秒のAES-GCM grantを追加する。grantは
+`complete` profile、public head、semantic root、project、anonymous principal、policy epoch、
+accepted sequenceへbindする。`POST /api/v0/sync/transfers`でplanを作り、最大16件・2 MiBの
+artifact/signature POSTと、最大1 MiBのblob range GETで取得する。同じwant/rangeはbyte-identicalに
+再送でき、server側download sessionは持たない。artifactとblobの両方でplanned head closureを
+再計算し、非reachableなdangling public uploadを返さない。async crypto/R2後にもpolicy epochを
+再確認する。
+
+`HELLO`は`TRANSFER`、opaque grant、TTL、profile、上限を同時に広告する。schema 5、binding、secret、
+R2 object、Queue、productionは変更しない。詳細は
+[`P5a2c local evidence`](../evidence/p5a2c-public-transfer-adapter-local-2026-08-26.md)を参照する。
+full local gateとnamed staging/production dry-runはgreenである。commitと通常CIが成功しても
+staging deployは自動承認されない。anonymous third partyが既存
+staging public headのreachable artifact/signature/blobをdownloadできる公開効果と、初回planで
+既存cursor key meta 1行がlazy生成され得ることをaccount ownerが明示承認した後だけmanual deployする。
+remote smokeは既存stateへのread-only plan/retry/range resumeに限定し、publish、R2 write、ref advance、
+Queue enqueueを行わない。
 
 API原則:
 

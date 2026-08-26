@@ -15,7 +15,15 @@ const expectedBody = {
         maxPageItems: 1_000,
         ordering: "artifact_id_asc",
       },
-      phases: ["HELLO", "INVENTORY"],
+      phases: ["HELLO", "INVENTORY", "TRANSFER"],
+      transfer: {
+        grant: "opaque",
+        grantTtlSeconds: 600,
+        maxArtifactBytes: 2_097_152,
+        maxArtifactItems: 16,
+        maxBlobChunkBytes: 1_048_576,
+        profiles: ["complete"],
+      },
     },
     principalId: "anonymous",
     projectId: `sha256:${"a".repeat(64)}`,
@@ -76,6 +84,8 @@ test("audits only the exact anonymous HELLO contract", async () => {
     maxPageItems: 1_000,
     projectId: `sha256:${"a".repeat(64)}`,
     protocolVersion: 0,
+    transferGrantTtlSeconds: 600,
+    transferProfile: "complete",
     view: "public",
   });
   assert.equal(requests, 1);

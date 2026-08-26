@@ -65,6 +65,8 @@ export async function auditWorkerPublicSync(
     maxPageItems: hello.capabilities.inventory.maxPageItems,
     projectId: hello.projectId,
     protocolVersion: hello.protocolVersion,
+    transferGrantTtlSeconds: hello.capabilities.transfer.grantTtlSeconds,
+    transferProfile: hello.capabilities.transfer.profiles[0],
     view: hello.view.id,
   };
 }
@@ -121,9 +123,9 @@ function validateBody(body) {
   }
   if (
     !plainObject(hello.capabilities) ||
-    !exactKeys(hello.capabilities, ["inventory", "phases"]) ||
+    !exactKeys(hello.capabilities, ["inventory", "phases", "transfer"]) ||
     JSON.stringify(hello.capabilities.phases) !==
-      JSON.stringify(["HELLO", "INVENTORY"])
+      JSON.stringify(["HELLO", "INVENTORY", "TRANSFER"])
   ) {
     fail("HELLO phases do not match the implemented contract");
   }
@@ -142,6 +144,26 @@ function validateBody(body) {
     inventory.ordering !== "artifact_id_asc"
   ) {
     fail("HELLO inventory capability does not match the contract");
+  }
+  const transfer = hello.capabilities.transfer;
+  if (
+    !plainObject(transfer) ||
+    !exactKeys(transfer, [
+      "grant",
+      "grantTtlSeconds",
+      "maxArtifactBytes",
+      "maxArtifactItems",
+      "maxBlobChunkBytes",
+      "profiles",
+    ]) ||
+    transfer.grant !== "opaque" ||
+    transfer.grantTtlSeconds !== 600 ||
+    transfer.maxArtifactBytes !== 2_097_152 ||
+    transfer.maxArtifactItems !== 16 ||
+    transfer.maxBlobChunkBytes !== 1_048_576 ||
+    JSON.stringify(transfer.profiles) !== JSON.stringify(["complete"])
+  ) {
+    fail("HELLO transfer capability does not match the contract");
   }
   return hello;
 }
@@ -192,7 +214,7 @@ async function main() {
   const origin = parseArguments(process.argv.slice(2));
   const result = await auditWorkerPublicSync(origin);
   console.log(
-    `Worker public sync audit passed; protocol=${result.protocolVersion}, view=${result.view}, max_page_items=${result.maxPageItems}, cursor_ttl_seconds=${result.cursorTtlSeconds}, project=${result.projectId}`,
+    `Worker public sync audit passed; protocol=${result.protocolVersion}, view=${result.view}, max_page_items=${result.maxPageItems}, cursor_ttl_seconds=${result.cursorTtlSeconds}, transfer_profile=${result.transferProfile}, transfer_grant_ttl_seconds=${result.transferGrantTtlSeconds}, project=${result.projectId}`,
   );
 }
 

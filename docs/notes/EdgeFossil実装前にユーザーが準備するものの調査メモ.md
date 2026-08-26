@@ -922,11 +922,31 @@ P5a2b2でcross-runtime vectorとともに検証する。このcheckpointでユ�
 - [x] HTTP、schema、binding、remote R2/Queue、productionを変更しない。
 - [x] 新しいCloudflare resource、credential、user作業は不要と確認する。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5a2b2実装をcommitし、通常CIを通す。
+- [x] P5a2b2実装をcommitし、通常CIを通す（commit `f13d705`）。
 
 P5a2b2はlocal-onlyであり、staging objectやremote Workerに触れない。test fixtureの
 Ed25519 seedはRFCの公開test dataであり、ユーザのsecretや新規credentialではない。
 このcheckpointでCloudflare側のユーザ作業はない。
+
+### P5a2c anonymous public transfer adapterで行う
+
+- [x] 600秒のopaque grantをproject、public head、semantic root、policy epochへbindする。
+- [x] anonymous plan、bounded artifact/signature、blob range routeをlocal実装する。
+- [x] 同一want/rangeのbyte-identical retryと中断再開を確認する。
+- [x] reachable closureを毎回確認し、dangling public artifactを取得不能にする。
+- [x] schema 5、binding、secret、R2 object、Queue、productionを変更しない。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5a2c実装をcommitし、通常CIを通す。
+- [ ] 次の全公開効果をaccount ownerが明示承認する。
+  - `HELLO`が`TRANSFER`を広告する。
+  - anonymous plan、artifact/signature、blob range routeが公開される。
+  - 第三者がstaging public headからreachableな全objectをdownloadできる。
+  - 未生成なら最初のplanで既存`sync_cursor_key_v0` meta 1行が生成され得る。
+- [ ] 承認後に限りmanual staging deployし、schema 5 healthとread-only transfer smokeを確認する。
+
+この段階で新しいCloudflare resource、secret、R2 credentialは不要である。承認前にDashboard操作や
+remote commandを行う必要もない。remote smokeは既存staging public stateを読むだけに限定し、
+artifact publish、R2 write、ref advance、Queue enqueueは行わない。
 
 ### 必要になった時だけ行う
 
@@ -997,8 +1017,11 @@ P5a2b1のpublic closure、canonical manifest、local R2 chunk readもinternal RP
 full local gate、named dry-run、commit `bee3d69`、通常CIまで完了した。P5a2b2の
 deterministic cross-runtime vector、WorkerとRustのexact byte照合、fresh atomic import、
 identical re-exportもlocal実装し、full local gateとnamed dry-runまで完了した。
-HTTP route、schema、binding、remote R2/Queue、productionは変更していないため、現時点で新しい
-Cloudflare resourceやcredentialは不要である。production secret、
+commit `f13d705`と通常CIも成功し、P5a2b2は完了した。P5a2cのopaque public transfer grantと
+anonymous HTTP adapterをlocal実装中である。schema、binding、remote R2/Queue、productionは
+変更していないため、現時点で新しいCloudflare resourceやcredentialは不要である。stagingへ
+公開する前に、reachable public objectを第三者がdownload可能になる効果の明示承認だけを求める。
+production secret、
 R2 S3 credential、custom domainはまだ作らない。
 
 Cloudflare側の準備は、次の順で段階的に行う。

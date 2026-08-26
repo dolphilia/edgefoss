@@ -35,11 +35,19 @@ import {
 } from "./sync-inventory.js";
 import {
   planPublicClone,
+  readPublicCloneArtifactTransfer,
   readPublicBlobChunk,
   type PublicBlobChunkInput,
   type PublicBlobChunkResult,
   type PublicClonePlanResult,
 } from "./sync-clone.js";
+import {
+  openPublicTransferGrant,
+  sealPublicTransferGrant,
+  type GrantedArtifactTransferResult,
+  type GrantedBlobChunkResult,
+  type PublicTransferPlanResult,
+} from "./sync-grant.js";
 import {
   beginPublicTransfer,
   readPublicArtifactTransfer,
@@ -76,6 +84,12 @@ export type {
   PublicClonePlanResult,
   PublicClonePlanV0,
 } from "./sync-clone.js";
+export type {
+  GrantedArtifactTransferResult,
+  GrantedBlobChunkResult,
+  PublicTransferGrantV0,
+  PublicTransferPlanResult,
+} from "./sync-grant.js";
 export {
   MAX_PUBLIC_BLOB_CHUNK_BYTES,
   MAX_PUBLIC_CLONE_ARTIFACT_BYTES,
@@ -774,6 +788,70 @@ export class RepositoryDO extends DurableObject<Env> {
       this.env.PUBLIC_BLOBS,
       input,
     );
+  }
+
+  async publicTransferPlan(
+    input: BeginPublicTransferInput,
+  ): Promise<PublicTransferPlanResult> {
+    const planned = await planPublicClone(this.ctx.storage.sql, input);
+    if (planned.status === "rejected") return planned;
+    const sealed = await sealPublicTransferGrant(this.ctx.storage.sql, {
+      headArtifactId: planned.plan.ref.targetArtifactId,
+      profile: "complete",
+      semanticRoot: planned.plan.semanticRoot,
+      snapshot: planned.plan.snapshot,
+    });
+    const current = beginPublicTransfer(this.ctx.storage.sql, input);
+    if (current.status === "rejected") return current;
+    if (current.snapshot.policyEpoch !== planned.plan.snapshot.policyEpoch) {
+      return {
+        code: "snapshot_stale",
+        currentPolicyEpoch: current.snapshot.policyEpoch,
+        status: "rejected",
+      };
+    }
+    return {
+      expiresAt: sealed.expiresAt,
+      grant: sealed.token,
+      plan: planned.plan,
+      status: "ok",
+    };
+  }
+
+  async publicGrantedArtifactTransfer(input: {
+    artifactIds: string[];
+    grant: string;
+  }): Promise<GrantedArtifactTransferResult> {
+    const opened = await openPublicTransferGrant(
+      this.ctx.storage.sql,
+      input.grant,
+    );
+    if (opened.status === "rejected") return opened;
+    return readPublicCloneArtifactTransfer(this.ctx.storage.sql, {
+      artifactIds: input.artifactIds,
+      headArtifactId: opened.grant.headArtifactId,
+      snapshot: opened.grant.snapshot,
+    });
+  }
+
+  async publicGrantedBlobChunk(input: {
+    blobId: string;
+    grant: string;
+    length: number;
+    offset: number;
+  }): Promise<GrantedBlobChunkResult> {
+    const opened = await openPublicTransferGrant(
+      this.ctx.storage.sql,
+      input.grant,
+    );
+    if (opened.status === "rejected") return opened;
+    return readPublicBlobChunk(this.ctx.storage.sql, this.env.PUBLIC_BLOBS, {
+      blobId: input.blobId,
+      headArtifactId: opened.grant.headArtifactId,
+      length: input.length,
+      offset: input.offset,
+      snapshot: opened.grant.snapshot,
+    });
   }
 
   #commitPublishedArtifact(
@@ -2163,6 +2241,280 @@ async function handlePublicInventoryApi(
   return jsonResponse({ inventory: result });
 }
 
+async function handlePublicTransferPlanApi(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "POST",
+    });
+  }
+  if (
+    request.body !== null ||
+    !hasExactQueryParameters(url.searchParams, [
+      "profile",
+      "project",
+      "protocol",
+      "view",
+    ])
+  ) {
+    return errorResponse(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  const projectId = url.searchParams.get("project") ?? "";
+  if (
+    !/^sha256:[0-9a-f]{64}$/u.test(projectId) ||
+    url.searchParams.get("profile") !== "complete" ||
+    url.searchParams.get("protocol") !== "0" ||
+    url.searchParams.get("view") !== "public"
+  ) {
+    return errorResponse(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  const result = await repositoryStub(env).publicTransferPlan({
+    principalId: "anonymous",
+    projectId,
+    protocolVersion: 0,
+    view: "public",
+  });
+  if (result.status === "rejected") {
+    const status =
+      result.code === "clone_plan_too_large"
+        ? 413
+        : result.code === "request_invalid"
+          ? 400
+          : 409;
+    return errorResponse(
+      result.code,
+      "The public transfer plan is unavailable.",
+      status,
+    );
+  }
+  return jsonResponse({
+    transfer: {
+      expiresAt: result.expiresAt,
+      grant: result.grant,
+      grantTtlSeconds: 600,
+      plan: {
+        artifactIds: result.plan.artifactIds,
+        blobs: result.plan.blobs,
+        manifestCbor: encodeBase64Url(
+          new Uint8Array(result.plan.manifestBytes),
+        ),
+        profile: result.plan.profile,
+        ref: result.plan.ref,
+        semanticRoot: result.plan.semanticRoot,
+        signatureIds: result.plan.signatureIds,
+      },
+      status: "ok",
+    },
+  });
+}
+
+async function handlePublicArtifactTransferApi(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "POST",
+    });
+  }
+  if ([...url.searchParams.keys()].length !== 0) {
+    return errorResponse(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  const authorized = readPublicTransferAuthorization(request);
+  if (authorized instanceof Response) return authorized;
+  const artifactIds = await readPublicArtifactWant(request);
+  const result = await repositoryStub(env).publicGrantedArtifactTransfer({
+    artifactIds,
+    grant: authorized,
+  });
+  if (result.status === "rejected") {
+    return publicTransferError(result.code, "artifact");
+  }
+  return jsonResponse({
+    transfer: {
+      items: result.items.map((item) => ({
+        artifactCbor: encodeBase64Url(new Uint8Array(item.artifactBytes)),
+        artifactId: item.artifactId,
+        kind: item.kind,
+        signatureCbor: encodeBase64Url(new Uint8Array(item.signatureBytes)),
+      })),
+      status: "ok",
+    },
+  });
+}
+
+async function handlePublicBlobTransferApi(
+  request: Request,
+  env: Env,
+  url: URL,
+): Promise<Response> {
+  if (request.method !== "GET") {
+    return errorResponse("method_not_allowed", "Method not allowed.", 405, {
+      allow: "GET",
+    });
+  }
+  if (!hasExactQueryParameters(url.searchParams, ["length", "offset"])) {
+    return errorResponse(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  const match =
+    /^\/api\/v0\/sync\/transfers\/blobs\/(sha256:[0-9a-f]{64})$/u.exec(
+      url.pathname,
+    );
+  const offsetText = url.searchParams.get("offset") ?? "";
+  const lengthText = url.searchParams.get("length") ?? "";
+  if (
+    match?.[1] === undefined ||
+    !/^(?:0|[1-9][0-9]{0,15})$/u.test(offsetText) ||
+    !/^(?:0|[1-9][0-9]{0,7})$/u.test(lengthText)
+  ) {
+    return errorResponse(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  const authorized = readPublicTransferAuthorization(request);
+  if (authorized instanceof Response) return authorized;
+  const result = await repositoryStub(env).publicGrantedBlobChunk({
+    blobId: match[1],
+    grant: authorized,
+    length: Number(lengthText),
+    offset: Number(offsetText),
+  });
+  if (result.status === "rejected") {
+    return publicTransferError(result.code, "blob");
+  }
+  const headers = new Headers({
+    ...JSON_HEADERS,
+    "content-length": String(result.chunk.bytes.byteLength),
+    "content-type": "application/octet-stream",
+    "x-edgefoss-blob-id": result.chunk.blobId,
+    "x-edgefoss-complete": String(result.chunk.complete),
+    "x-edgefoss-offset": String(result.chunk.offset),
+    "x-edgefoss-total-bytes": String(result.chunk.totalBytes),
+  });
+  return new Response(result.chunk.bytes, { headers });
+}
+
+function readPublicTransferAuthorization(request: Request): string | Response {
+  const authorization = request.headers.get("authorization") ?? "";
+  const grant = /^Bearer (efoss_transfer_v0_[A-Za-z0-9_-]{1,4076})$/u.exec(
+    authorization,
+  )?.[1];
+  return (
+    grant ??
+    errorResponse(
+      "transfer_grant_invalid",
+      "A valid public transfer grant is required.",
+      401,
+      { "www-authenticate": 'Bearer realm="edgefoss-public-transfer"' },
+    )
+  );
+}
+
+async function readPublicArtifactWant(request: Request): Promise<string[]> {
+  if (
+    request.headers.get("content-type")?.split(";", 1)[0] !== "application/json"
+  ) {
+    throw new HttpRequestError(
+      "content_type_invalid",
+      "Content-Type must be application/json.",
+      415,
+    );
+  }
+  const bytes = await readBoundedBody(request, MAX_JSON_BODY_BYTES);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new HttpRequestError(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpRequestError(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  const input = parsed as Record<string, unknown>;
+  if (
+    !hasExactKeys(input, ["artifactIds"]) ||
+    !Array.isArray(input.artifactIds) ||
+    input.artifactIds.length < 1 ||
+    input.artifactIds.length > 16 ||
+    input.artifactIds.some(
+      (id) => typeof id !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(id),
+    ) ||
+    input.artifactIds.some(
+      (id, index, ids) => index > 0 && id <= ids[index - 1]!,
+    )
+  ) {
+    throw new HttpRequestError(
+      "transfer_request_invalid",
+      "The transfer request is invalid.",
+      400,
+    );
+  }
+  return input.artifactIds as string[];
+}
+
+function publicTransferError(
+  code: string,
+  kind: "artifact" | "blob",
+): Response {
+  if (code === "transfer_grant_invalid" || code === "transfer_grant_expired") {
+    return errorResponse(
+      "transfer_grant_invalid",
+      "A valid public transfer grant is required.",
+      401,
+      { "www-authenticate": 'Bearer realm="edgefoss-public-transfer"' },
+    );
+  }
+  if (code === "snapshot_stale" || code === "project_not_initialized") {
+    return errorResponse(
+      code,
+      "The public transfer snapshot is unavailable.",
+      409,
+    );
+  }
+  if (code === "artifact_unavailable" || code === "blob_unavailable") {
+    return errorResponse(
+      `${kind}_unavailable`,
+      `The requested ${kind} is unavailable.`,
+      404,
+    );
+  }
+  return errorResponse(
+    code,
+    "The transfer request is invalid.",
+    code === "transfer_budget_exceeded" ? 413 : 400,
+  );
+}
+
 function hasExactQueryParameters(
   parameters: URLSearchParams,
   expected: readonly string[],
@@ -2327,6 +2679,30 @@ export default {
     if (url.pathname === "/api/v0/inventory") {
       try {
         return await handlePublicInventoryApi(request, env, url);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname === "/api/v0/sync/transfers") {
+      try {
+        return await handlePublicTransferPlanApi(request, env, url);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname === "/api/v0/sync/transfers/artifacts") {
+      try {
+        return await handlePublicArtifactTransferApi(request, env, url);
+      } catch (error) {
+        return mapRequestError(error, url.pathname);
+      }
+    }
+
+    if (url.pathname.startsWith("/api/v0/sync/transfers/blobs/")) {
+      try {
+        return await handlePublicBlobTransferApi(request, env, url);
       } catch (error) {
         return mapRequestError(error, url.pathname);
       }
