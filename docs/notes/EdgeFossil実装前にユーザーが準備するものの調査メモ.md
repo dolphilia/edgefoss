@@ -937,16 +937,18 @@ Ed25519 seedはRFCの公開test dataであり、ユーザのsecretや新規crede
 - [x] schema 5、binding、secret、R2 object、Queue、productionを変更しない。
 - [x] full local gateとnamed staging/production dry-runを通す。
 - [x] P5a2c実装をcommitし、通常CIを通す（commit `30b1784`）。
-- [ ] 次の全公開効果をaccount ownerが明示承認する。
+- [x] 次の全公開効果をaccount ownerが明示承認する（commit `005152d`の通常CI成功後）。
   - `HELLO`が`TRANSFER`を広告する。
   - anonymous plan、artifact/signature、blob range routeが公開される。
   - 第三者がstaging public headからreachableな全objectをdownloadできる。
   - 未生成なら最初のplanで既存`sync_cursor_key_v0` meta 1行が生成され得る。
-- [ ] 承認後に限りmanual staging deployし、schema 5 healthとread-only transfer smokeを確認する。
+- [ ] 承認後に限りmanual staging deployし、schema 5 health、`TRANSFER` HELLO、既存profile境界を確認する。
 
 この段階で新しいCloudflare resource、secret、R2 credentialは不要である。承認前にDashboard操作や
-remote commandを行う必要もない。remote smokeは既存staging public stateを読むだけに限定し、
-artifact publish、R2 write、ref advance、Queue enqueueは行わない。
+remote commandを行う必要もない。既存staging headはtree/change clockが1/2で現行`complete` profileの
+0開始条件に対応しないため、read-only auditはplanのHTTP 409 `clone_profile_unsupported`を期待する。
+artifact/blob retryは行わず、artifact publish、R2 write、ref advance、Queue enqueueもしない。
+remote transfer成功を必要とする段階では、staging refを変更する別の明示承認を先に求める。
 
 ### 必要になった時だけ行う
 

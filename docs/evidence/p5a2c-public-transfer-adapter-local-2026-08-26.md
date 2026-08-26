@@ -41,7 +41,8 @@ The completed full local gate produced:
 - protocol: 9 files and 182 tests passed;
 - Worker: 12 files and 42 tests passed;
 - owner adapter and smoke tools: 12 tests passed;
-- cloud plan, state, and deploy tools: 25 tests passed;
+- cloud plan, state, and deploy tools: 29 tests passed, including the 4-test
+  staging transfer-profile audit;
 - Rust workspace tests, the 2 cross-runtime clone tests, Clippy, formatting,
   static-assets smoke, protocol vectors, and documentation checks all passed;
 - 118 Markdown files passed the documentation and link checker.
@@ -74,6 +75,27 @@ of these effects:
   does not already exist;
 - schema 5, R2 objects, Queue configuration, and production remain unchanged.
 
-The first remote verification must be read-only: health and HELLO audit, plan,
-artifact retry, and range retry against existing staging public state. It must
-not publish an artifact, write R2, advance a ref, or enqueue an event.
+After commit `005152d` and its ordinary CI passed, the account owner explicitly
+approved all listed P5a2c staging effects. This approval does not authorize a
+new artifact, R2 object, ref advance, Queue event, or production change.
+
+## Existing staging profile boundary
+
+The committed P4c staging fixture uses tree logical clock 1 and first-change
+clock 2. P5a2b2 deliberately restricts the current Rust-compatible `complete`
+profile to tree clock 0 and first-change clock 0. Therefore the existing
+staging head must return `clone_profile_unsupported` before grant creation. A
+successful remote artifact/blob retry cannot be produced from that state
+without a separately approved canonical publication and ref advance.
+
+The dedicated `cloud:audit-public-transfer` command is credential-free and
+fixed to the exact staging origin. It first verifies the full anonymous HELLO
+contract, then sends one bodyless plan POST and requires HTTP 409, exact
+`clone_profile_unsupported`, `no-store`, `nosniff`, and no authentication
+challenge. It rejects a successful plan or any other state drift. The manual
+deployment workflow runs it after health and HELLO.
+
+This audit performs no artifact or blob read and no remote write. Its focused
+matrix has four tests, the full local gate is green, and both named dry-runs
+retain the 144.18 KiB bundle and existing binding topology. Commit and ordinary
+CI for this approval/audit increment remain the final pre-deploy gate.

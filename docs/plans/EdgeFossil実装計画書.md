@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 29（P5a2c commit/CI完了とstaging承認gateを反映）
+改訂: Revision 30（P5a2c staging承認と既存profile境界監査を反映）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -667,7 +667,8 @@ full local gate、named staging/production dry-run、commit `f13d705`、通常CI
 P5a2cでは600秒のopaque grantとanonymous plan/artifact/blob range HTTP adapterをlocal実装した。
 reachable public closureとpolicy epochへbindし、再送・中断再開をserver sessionなしで成立させる。
 full local gate、named dry-run、commit `30b1784`、通常CIはgreenである。remote deployはまだ行わず、
-account ownerの公開効果承認を必要とする。
+commit `005152d`の通常CI後にaccount ownerが公開効果を明示承認した。既存staging headはcomplete
+profile非対応のため、次はread-only監査を含むincrementのcommit/通常CI後にmanual deployする。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1035,7 +1036,7 @@ P5a2はさらに次の順で分割する。
 | P5a2a internal artifact transfer | 完了。commit `b55d365`と通常CI成功を確認 |
 | P5a2b1 closure/blob/manifest | 完了。commit `bee3d69`と通常CI成功を確認 |
 | P5a2b2 cross-runtime import | 完了。commit `f13d705`と通常CI成功を確認 |
-| P5a2c external transfer adapter | commit `30b1784`と通常CI完了。staging公開効果の承認待ち |
+| P5a2c external transfer adapter | 公開効果承認済み。read-only profile境界監査のcommit/CI待ち |
 
 P5a2aでは[`ADR 0039`](../adr/0039-bounded-internal-public-artifact-transfer.md)に従い、開始位置が
 空のinternal snapshot anchorと、sorted/uniqueなbounded WANTを受けるRepositoryDO RPCを追加した。
@@ -1086,8 +1087,15 @@ full local gate、named staging/production dry-run、commit `30b1784`、通常CI
 staging deployは自動承認されない。anonymous third partyが既存
 staging public headのreachable artifact/signature/blobをdownloadできる公開効果と、初回planで
 既存cursor key meta 1行がlazy生成され得ることをaccount ownerが明示承認した後だけmanual deployする。
-remote smokeは既存stateへのread-only plan/retry/range resumeに限定し、publish、R2 write、ref advance、
-Queue enqueueを行わない。
+commit `005152d`と通常CIの後、account ownerはこれらのP5a2c staging公開効果を明示承認した。
+
+既存P4c staging fixtureはtree clock 1、first-change clock 2であり、P5a2b2の現行`complete` profileが
+要求する0開始historyには対応しない。したがって最初のremote auditはhealthと`TRANSFER` HELLOに続き、
+bodyなしplan POSTがHTTP 409 `clone_profile_unsupported`へ安全に収束することを確認する。
+`cloud:audit-public-transfer`はexact staging originだけを許し、credential、artifact/blob read、publish、
+R2 write、ref advance、Queue enqueueを行わない。成功planや別の拒否理由はstate driftとしてfailする。
+artifact/range retryのremote成功を証明するにはcanonical publicationとpublic ref advanceが必要なため、
+今回の承認へ含めず別gateへ分離する。
 
 API原則:
 
