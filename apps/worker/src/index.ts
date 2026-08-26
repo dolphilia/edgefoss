@@ -56,6 +56,11 @@ import {
   type PublicArtifactTransferInput,
   type PublicArtifactTransferResult,
 } from "./sync-transfer.js";
+import {
+  preflightPublicPush,
+  type PublicPushPreflightInput,
+  type PublicPushPreflightResult,
+} from "./sync-push.js";
 
 export type {
   PublishArtifactInput,
@@ -103,6 +108,15 @@ export type {
   PublicArtifactTransferItemV0,
   PublicArtifactTransferResult,
 } from "./sync-transfer.js";
+export {
+  MAX_PUSH_PREFLIGHT_ARTIFACTS,
+  MAX_PUSH_PREFLIGHT_BLOBS,
+} from "./sync-push.js";
+export type {
+  PublicPushPreflightInput,
+  PublicPushPreflightResult,
+  PublicPushSnapshotV0,
+} from "./sync-push.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -659,6 +673,14 @@ export class RepositoryDO extends DurableObject<Env> {
       if (code) return { code, status: "rejected" };
       throw error;
     }
+  }
+
+  preflightPublicPush(
+    input: PublicPushPreflightInput,
+  ): PublicPushPreflightResult {
+    return this.ctx.storage.transactionSync(() =>
+      preflightPublicPush(this.ctx.storage.sql, input),
+    );
   }
 
   advancePolicyEpoch(input: AdvancePolicyEpochInput): AdvancePolicyEpochResult {

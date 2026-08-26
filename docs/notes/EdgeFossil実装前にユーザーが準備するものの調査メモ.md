@@ -954,6 +954,22 @@ remote commandを行う必要もない。既存staging headはtree/change clock�
 artifact/blob retryは行わず、artifact publish、R2 write、ref advance、Queue enqueueもしない。
 remote transfer成功を必要とする段階では、staging refを変更する別の明示承認を先に求める。
 
+### P5b0 internal public push preflightで行う
+
+- [x] owner/public/protocol 0だけを受けるinternal RPCに限定する。
+- [x] artifact/blob inventoryを各256 IDへboundし、sorted/uniqueを要求する。
+- [x] 不足集合とproject、policy epoch、accepted sequence、public refを一つのSQLite snapshotで返す。
+- [x] 別projectではinventoryを返さず`project_conflict`にする。
+- [x] preflightをleaseとせず、後続mutationがpolicy/ref/operationを再検証する責任を残す。
+- [x] HTTP、schema、binding、secret、R2/Queue、staging/productionを変更しない。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5b0実装をcommitし、通常CIを通す。
+
+P5b0はlocal-onlyで、既存のCloudflare resourceや`EDGEFOSS_OWNER_TOKEN`も使用しない。この段階で
+ユーザがDashboardやWranglerで行う作業はない。P5b2で認証付きrouteを公開する前に公開surfaceを
+再レビューし、P5b3で実際のstaging pushを行う前に、追加artifact/blob/ref/Queue効果を具体的に示して
+別の明示承認を求める。新しいcredentialが必要とは現時点で見込まない。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。

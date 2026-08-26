@@ -46,5 +46,6 @@ ADRs capture decisions that constrain implementation or compatibility. Research 
 | [0040](0040-bounded-public-clone-closure-and-blob-chunks.md)            | Plan public closure and resumable blob chunks       | Accepted for P5a2b1              |
 | [0041](0041-cross-runtime-public-clone-import-contract.md)              | Prove Worker clone import across runtimes           | Accepted for P5a2b2              |
 | [0042](0042-opaque-public-transfer-grant-and-resumable-http-adapter.md) | Expose clone transfer with an opaque bounded grant  | Accepted for P5a2c local         |
+| [0043](0043-bounded-internal-public-push-preflight.md)                  | Preflight push against one authority snapshot       | Accepted for P5b0 local          |
 
 Use [the ADR template](0000-template.md) for new decisions. Accepted decisions can be superseded but are not rewritten to hide their original rationale.

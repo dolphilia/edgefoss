@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 32（P5a2c staging activation完了を反映）
+改訂: Revision 33（P5b0 bounded internal push preflightを具体化）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -672,6 +672,10 @@ profile非対応である。commit `75a6544`のmanual deploy、schema 5 health�
 最終plan auditはempty POSTのedge表現差により400となった。zero-byte streamをboundedに受ける修正を
 commit `e628203`として通常CIを通し、同じworkflowの再実行でdeploy、health、HELLO、期待する
 `clone_profile_unsupported`境界まで成功した。P5a2c staging activationは完了した。
+P5b0ではremote surfaceを増やさず、owner/public/protocol 0に限定したbounded push preflightを
+RepositoryDO internal RPCとして実装した。local bundle inventoryに対する不足artifact/blob集合と、
+同一SQLite snapshotのproject、policy epoch、accepted sequence、public ref generationを返す。
+schema、binding、credential、R2/Queue、remote stateは不変であり、commitと通常CIは未確認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1116,6 +1120,26 @@ productionも不変である。詳細は
 P5a2c staging activationは完了した。ただし既存staging historyではsuccessful complete cloneと
 disconnect resumeをremote証明できない。canonical staging publication/ref advanceまたは互換projectを
 使う検証は、恒久state変更を伴う別の明示承認gateとする。
+
+P5bは次の順で小さく進める。
+
+| increment | 完了状態 |
+|---|---|
+| P5b0 internal push preflight | full local gateとnamed dry-run成功。commit/通常CI待ち |
+| P5b1 cross-runtime push plan | 未着手。verified local bundleをbounded mutation列へ変換 |
+| P5b2 authenticated push adapter | 未着手。既存owner secretでHTTP negotiation/orchestration |
+| P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
+
+P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
+sorted/uniqueな最大256 artifact IDと256 blob IDを、RepositoryDOの一つの同期SQLite transactionで
+照合する。未初期化authorityでは全不足集合とnull project/refを返し、初期化後は不足集合に加えて
+policy epoch、accepted sequence、public `heads/main` target/generationを同じsnapshotから返す。
+別projectはauthority inventoryを返さず`project_conflict`に畳む。結果はleaseではなく、後続の
+upload/publishは既存P4のpolicy check、operation dedupe、ref CASを必ず再実行する。HTTP route、
+`HELLO` capability、Rust network client、schema、binding、secret、R2/Queue、staging/productionは
+変更しない。local verificationは
+[`P5b0 local evidence`](../evidence/p5b0-public-push-preflight-local-2026-08-26.md)を参照する。
+full local gateとnamed staging/production dry-runはgreenであり、commitと通常CIは未確認である。
 
 API原則:
 
