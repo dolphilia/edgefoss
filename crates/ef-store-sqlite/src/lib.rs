@@ -20,6 +20,13 @@ use ef_format::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
+mod push_plan;
+
+pub use push_plan::{
+    FreshPublicPushPlan, PublicPushArtifactKind, PublicPushArtifactStep, PublicPushBlobStep,
+    PublicPushPreflightSnapshot, PublicPushRefStep, plan_fresh_public_push,
+};
+
 const SCHEMA_VERSION: i64 = 4;
 const MIGRATION_1: &str = include_str!("../migrations/0001_repository_identity.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_working_copy_tracking.sql");
@@ -83,6 +90,7 @@ pub enum StoreError {
     InvalidRead(String),
     InvalidBundle(String),
     InvalidImport(String),
+    InvalidPushPlan(String),
     RefConflict(String),
     Corrupt(String),
 }
@@ -103,6 +111,7 @@ impl fmt::Display for StoreError {
             Self::InvalidRead(message) => write!(formatter, "invalid read request: {message}"),
             Self::InvalidBundle(message) => write!(formatter, "invalid bundle: {message}"),
             Self::InvalidImport(message) => write!(formatter, "invalid import: {message}"),
+            Self::InvalidPushPlan(message) => write!(formatter, "invalid push plan: {message}"),
             Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
@@ -123,6 +132,7 @@ impl Error for StoreError {
             | Self::InvalidRead(_)
             | Self::InvalidBundle(_)
             | Self::InvalidImport(_)
+            | Self::InvalidPushPlan(_)
             | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }

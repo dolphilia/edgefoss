@@ -17,6 +17,18 @@ const fromHex = (value: string) =>
 const toHex = (value: Uint8Array) =>
   [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
+async function operationId(fields: string[]): Promise<string> {
+  const bytes = new TextEncoder().encode(
+    `edgefoss:push-operation:v0\0${fields.join("\0")}`,
+  );
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const id = digest.slice(0, 16);
+  id[6] = (id[6]! & 0x0f) | 0x50;
+  id[8] = (id[8]! & 0x3f) | 0x80;
+  const hex = toHex(id);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 async function main(): Promise<void> {
   // RFC 8032 test key 1. This key is public test data and must never be used
   // outside deterministic protocol fixtures.
@@ -125,6 +137,58 @@ async function main(): Promise<void> {
       ]),
     ].sort(([left], [right]) => left.localeCompare(right)),
   );
+  const freshPushArtifacts = await Promise.all(
+    [
+      { artifact: genesis, expectedGeneration: null, kind: "project.genesis" },
+      { artifact: tree, expectedGeneration: null, kind: "tree" },
+      { artifact: change, expectedGeneration: 0, kind: "change" },
+    ].map(async ({ artifact, expectedGeneration, kind }) => ({
+      artifact_id: artifact.id,
+      artifact_path: `artifacts/${artifact.id.slice(7)}.cbor`,
+      expected_policy_epoch: 0,
+      kind,
+      operation_id: await operationId([
+        "publish",
+        genesis.id,
+        "public",
+        artifact.id,
+        "0",
+        expectedGeneration === null ? "-" : String(expectedGeneration),
+      ]),
+      ref:
+        expectedGeneration === null
+          ? null
+          : { expected_generation: expectedGeneration, name: "heads/main" },
+      signature_path: `signatures/${artifact.signatureId.slice(7)}.cbor`,
+    })),
+  );
+  const freshPushPlan = {
+    snapshot: {
+      accepted_sequence: 0,
+      missing_artifact_ids: artifactIds,
+      missing_blob_ids: [blobId],
+      policy_epoch: 0,
+      project_id: null,
+      ref_generation: null,
+      ref_target: null,
+    },
+    blobs: [
+      {
+        blob_id: blobId,
+        byte_size: blob.byteLength,
+        object_path: `blobs/${blobId.slice(7)}.bin`,
+        operation_id: await operationId([
+          "upload",
+          genesis.id,
+          "public",
+          blobId,
+          String(blob.byteLength),
+          "0",
+        ]),
+      },
+    ],
+    artifacts: freshPushArtifacts,
+  };
   const output = `${JSON.stringify(
     {
       profile: "edgefossil-public-clone-v0",
@@ -133,6 +197,7 @@ async function main(): Promise<void> {
       head_artifact_id: change.id,
       ref_generation: 1,
       publish_order: artifacts.map(({ id }) => id),
+      fresh_push_plan: freshPushPlan,
       manifest_cbor_hex: toHex(manifest),
       files,
     },

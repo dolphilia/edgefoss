@@ -963,12 +963,27 @@ remote transfer成功を必要とする段階では、staging refを変更する
 - [x] preflightをleaseとせず、後続mutationがpolicy/ref/operationを再検証する責任を残す。
 - [x] HTTP、schema、binding、secret、R2/Queue、staging/productionを変更しない。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5b0実装をcommitし、通常CIを通す。
+- [x] P5b0実装をcommitし、通常CIを通す（commit `d01815e`）。
 
 P5b0はlocal-onlyで、既存のCloudflare resourceや`EDGEFOSS_OWNER_TOKEN`も使用しない。この段階で
 ユーザがDashboardやWranglerで行う作業はない。P5b2で認証付きrouteを公開する前に公開surfaceを
 再レビューし、P5b3で実際のstaging pushを行う前に、追加artifact/blob/ref/Queue効果を具体的に示して
 別の明示承認を求める。新しいcredentialが必要とは現時点で見込まない。
+
+### P5b1a fresh public push planで行う
+
+- [x] verified public bundleとfresh authority preflightだけを入力にする。
+- [x] blob、genesis、child-first tree、oldest-first change/ref CASの順序を決定する。
+- [x] retryで再構築できるdomain-separated deterministic operation IDを使う。
+- [x] TypeScript生成vectorをRustが独立再構築し、Workers runtimeで全step/retryを実行する。
+- [x] nonfresh/incomplete preflightをmutation前に拒否する。
+- [x] HTTP、schema、binding、secret、R2/Queue、staging/productionを変更しない。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5b1a実装をcommitし、通常CIを通す。
+
+P5b1aのWorkers runtime testが使うR2/DOはlocal test環境だけであり、Cloudflare account上のresourceでは
+ない。owner token、signing key、API tokenの新規作成や入力は不要である。P5b1bのincremental planも
+まずlocal-onlyで進め、実staging writeはP5b3の別承認まで行わない。
 
 ### 必要になった時だけ行う
 

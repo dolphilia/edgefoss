@@ -11,6 +11,7 @@ version.workspace = true
 edgefoss-core = { path = "../edgefoss-core" }
 ef-format = { path = "../ef-format" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 ed25519-dalek = "2.2"

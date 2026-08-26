@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 33（P5b0 bounded internal push preflightを具体化）
+改訂: Revision 34（P5b1a fresh public push planを具体化）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -675,7 +675,10 @@ commit `e628203`として通常CIを通し、同じworkflowの再実行でdeploy
 P5b0ではremote surfaceを増やさず、owner/public/protocol 0に限定したbounded push preflightを
 RepositoryDO internal RPCとして実装した。local bundle inventoryに対する不足artifact/blob集合と、
 同一SQLite snapshotのproject、policy epoch、accepted sequence、public ref generationを返す。
-schema、binding、credential、R2/Queue、remote stateは不変であり、commitと通常CIは未確認である。
+schema、binding、credential、R2/Queue、remote stateは不変である。commit `d01815e`と通常CIが
+成功したためP5b0は完了した。P5b1aではverified public bundleとfresh preflightから、決定的な
+blob/artifact/ref mutation planをRustで生成し、同じvectorをWorkers runtimeで実行するlocal-only
+cross-runtime契約を実装した。commitと通常CIは未確認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1125,8 +1128,9 @@ P5bは次の順で小さく進める。
 
 | increment | 完了状態 |
 |---|---|
-| P5b0 internal push preflight | full local gateとnamed dry-run成功。commit/通常CI待ち |
-| P5b1 cross-runtime push plan | 未着手。verified local bundleをbounded mutation列へ変換 |
+| P5b0 internal push preflight | 完了。commit `d01815e`と通常CI成功を確認 |
+| P5b1a fresh cross-runtime push plan | full local gateとnamed dry-run成功。commit/通常CI待ち |
+| P5b1b incremental push plan | 未着手。既存head、resume、conflictを扱う |
 | P5b2 authenticated push adapter | 未着手。既存owner secretでHTTP negotiation/orchestration |
 | P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
 
@@ -1139,6 +1143,19 @@ upload/publishは既存P4のpolicy check、operation dedupe、ref CASを必ず�
 `HELLO` capability、Rust network client、schema、binding、secret、R2/Queue、staging/productionは
 変更しない。local verificationは
 [`P5b0 local evidence`](../evidence/p5b0-public-push-preflight-local-2026-08-26.md)を参照する。
+full local gateとnamed staging/production dry-run、commit `d01815e`、通常CIはgreenであり、P5b0は
+完了した。
+
+P5b1aでは[`ADR 0044`](../adr/0044-deterministic-fresh-public-push-plan.md)と
+[`public push plan v0`](../../spec/push-v0.md)に従い、verified complete public bundleと
+project/ref null、sequence/policy epoch 0、全object missingのfresh preflightだけを受けるRust plannerを
+実装した。blobを先行し、genesis、child-first tree、oldest-first changeの順で、changeにはgeneration
+0からのpublic ref CASを付ける。各mutationのoperation IDはdomain-separated SHA-256から決定的に
+導出する。TypeScript生成vectorをRustが独立再構築し、Workers runtimeは同じplanを既存P4 RPCで
+実行して全retryの収束と最終sequence 3/ref generation 1を確認する。HTTP route、schema、binding、
+credential、remote R2/Queue、staging/productionは変更しない。incremental authorityはP5b1bまで
+明示的に非対応とする。local verificationは
+[`P5b1a local evidence`](../evidence/p5b1a-fresh-public-push-plan-local-2026-08-26.md)を参照する。
 full local gateとnamed staging/production dry-runはgreenであり、commitと通常CIは未確認である。
 
 API原則:

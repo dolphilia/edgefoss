@@ -19,6 +19,7 @@ Read the documents in this order:
 8. [`signature-v0.md`](signature-v0.md)
 9. [`semantic-root-v0.md`](semantic-root-v0.md)
 10. [`bundle-v0.md`](bundle-v0.md)
+11. [`push-v0.md`](push-v0.md)
 
 Machine-readable valid and invalid examples live in [`vectors/`](vectors/).
 Rust and TypeScript implementations MUST consume the same files rather than
@@ -27,7 +28,8 @@ copying expected values into language-specific tests.
 [`vectors/public-clone-v0.json`](vectors/public-clone-v0.json) is an integration
 vector rather than a new wire schema. It captures the exact signed
 `edgefossil-bundle` output produced by the Workers complete-clone profile and
-consumed by the Rust SQLite importer.
+consumed by the Rust SQLite importer. Its `fresh_push_plan` is independently
+reconstructed by Rust and executed by the Workers runtime.
 
 ## Compatibility rule
 
