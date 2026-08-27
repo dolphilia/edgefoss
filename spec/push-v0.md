@@ -149,3 +149,26 @@ returned local plan through the existing bounded upload/finalize and artifact
 publication endpoints. Each mutation remains independently authenticated and
 revalidates policy, referenced objects, operation deduplication, and ref CAS.
 Anonymous public `HELLO` does not advertise owner-only push capability.
+
+## Bounded P5b3 staging proof profile
+
+The first remote linear-push proof is an operator profile, not a general wire
+capability. It MUST reconstruct the deterministic existing staging project,
+tree, and generation-1 head and two new signed sibling changes. Before any
+mutation it MUST accept only the exact initial sequence-4 state or the exact
+already-converged sequence-5 state, including matching missing inventories and
+outbox ownership.
+
+The intended change reuses the existing public tree and blob. Its publication
+MUST use the deterministic `publish` operation ID at policy epoch 0 and expected
+generation 1. Exact retries MUST return the stored sequence-5, generation-2
+accepted result. The stale sibling MUST use its own deterministic operation ID
+with expected generation 1 and return HTTP 409 `ref_conflict` twice after the
+fast-forward. It MUST remain missing in the final preflight.
+
+The final state is accepted sequence 5, policy epoch 0, public `heads/main`
+generation 2 targeting the intended change, and one matching delivered outbox
+event. The profile MUST NOT call upload endpoints or write R2. It MUST NOT add
+the stale sibling, advance members state, change schema/bindings/secrets, or
+access production. A rerun from the exact final state performs only idempotent
+accepted/conflict retries and adds no event or sequence.

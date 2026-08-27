@@ -1059,6 +1059,35 @@ public `heads/main` generation 1、contractに適合するproject/target ID、`r
 ref、R2、Queue、members state、productionを変更していない。P5b2は完了し、P5b3 staging pushは引き続き
 具体的なwrite効果を示す別承認が必要である。
 
+### P5b3 bounded retry/conflict staging proofで行う
+
+- [x] 既存staging sequence 4/ref generation 1を開始条件として固定する。
+- [x] 既存blob/treeを再利用する決定的public changeとstale siblingをlocal生成する。
+- [x] 未実行状態と完全収束状態だけを許すpreflight/outbox guardを実装する。
+- [x] accepted retry、stale HTTP 409 retry、final preflight、Queue deliveryをlocal testする。
+- [x] upload APIを呼ばず、R2 writeを発生させないことをlocal testする。
+- [x] full local gateとnamed staging/production dry-runを通す。
+- [ ] P5b3 local実装をcommitし、通常CIを通す。
+- [ ] 下記の恒久staging効果をaccount ownerが明示承認する。
+- [ ] 承認記録をcommitし、通常CIを通す。
+- [ ] ownerが手元のtokenでremote smokeを一度実行する。
+
+P5b3 local実装で新しいCloudflare resource、binding、secret、Dashboard設定は不要である。Worker codeや
+configurationも変えないため、このoperator toolだけを理由にmanual deployは行わない。remote実行前に
+必要なのは、既存`EDGEFOSS_OWNER_TOKEN`へ手元からアクセスできることと、次の効果への明示承認だけである。
+
+- public change artifactを1件追加する。
+- accepted sequenceを4から5へ進める。
+- public `heads/main`をgeneration 1から2へfast-forwardする。
+- sequence 5のoutbox/Queue eventを1件作り、consumer deliveryを待つ。
+- stale sibling requestを二度送るが、artifactは追加せず、sequence/ref/outboxも変えない。
+- 既存blob/treeを再利用し、upload APIとR2 writeは行わない。
+- schema、binding、secret、members state、productionは変更しない。
+- 同じcommandの再実行は既存accepted/conflict resultへ収束し、追加eventを作らない。
+
+local実装のcommit/push/通常CIと上記効果の承認記録commit/通常CIが成功するまでは、owner tokenを入力せず
+remote smokeを実行しない。承認後の実行コマンドと安全なtoken解除手順は、その段階で改めて提示する。
+
 ### 必要になった時だけ行う
 
 - [ ] CI deploy開始時にscoped Cloudflare API tokenを作る。
