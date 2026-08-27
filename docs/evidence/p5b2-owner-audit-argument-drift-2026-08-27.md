@@ -54,3 +54,9 @@ ordinary GitHub Actions before the operator retries. A retry is allowed only
 after the manual staging workflow is also confirmed successful. The retry
 remains an empty-inventory, read-only preflight and does not authorize upload,
 publish, R2, Queue, or production effects.
+
+The correction was committed as `28ef687`, pushed, and passed ordinary GitHub
+Actions. The manual staging workflow was confirmed successful. The operator
+then retried the exact documented command: it exited 0, validated accepted
+sequence 4, policy epoch 0, public `heads/main` generation 1, and reported
+`remoteWritePerformed: false`. The retry gate is complete.

@@ -1017,8 +1017,8 @@ preflight/publish、R2 write、Queue enqueueは行わない。P5b2で認証付�
 - [x] P5b2実装をcommitし、通常CIを通す（commit `fdfe87b`）。
 - [x] commit/通常CI後、新しいpreflight routeのstaging公開効果をaccount ownerが明示承認する。
 - [x] 承認記録をcommitし、通常CIを通す（commit `252bd94`）。
-- [ ] mainの`Deploy staging Worker` workflowを一度実行し、全step成功を確認する。
-- [ ] workflow成功後にread-only owner preflight auditを実行する。
+- [x] mainの`Deploy staging Worker` workflowを一度実行し、全step成功を確認する。
+- [x] workflow成功後にread-only owner preflight auditを実行する。
 
 P5b2のlocal実装でユーザが新たに準備するものはない。既存staging Workerにはすでに
 `EDGEFOSS_OWNER_TOKEN`が設定済みであり、新しいsecretやCloudflare resourceを作らない。local testは
@@ -1051,6 +1051,13 @@ unset EDGEFOSS_OWNER_TOKEN
 成功時は`remoteWritePerformed: false`、現在の`acceptedSequence`、`policyEpoch`、`projectId`、public refが
 表示される。報告するのはexit statusとこれらの非secret fieldだけで、token値は報告しない。失敗しても
 upload/publish smokeへ進まず、tokenは必ず`unset`する。この手順は新routeのstaging公開承認前には実行しない。
+
+2026-08-27、parser修正commit `28ef687`の通常CI成功と、先行していたmain-only manual workflowの
+成功をaccount ownerが確認した。owner auditの再試行はexit 0で、accepted sequence 4、policy epoch 0、
+public `heads/main` generation 1、contractに適合するproject/target ID、`remoteWritePerformed: false`を
+確認した。token値は共有されていない。これは空inventoryのread-only observationだけであり、artifact/blob/
+ref、R2、Queue、members state、productionを変更していない。P5b2は完了し、P5b3 staging pushは引き続き
+具体的なwrite効果を示す別承認が必要である。
 
 ### 必要になった時だけ行う
 

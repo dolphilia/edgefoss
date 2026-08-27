@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 37（P5b2 owner auditのpnpm引数境界と再試行gateを具体化）
+改訂: Revision 38（P5b2 staging read-only proofを完了）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -687,7 +687,9 @@ cross-runtime HTTP testをlocal実装した。full local gateとnamed dry-runは
 credential-free HTTP 401 audit、その後のread-only owner preflightまでを明示承認した。manual deployは
 承認記録commit `252bd94`と通常CIまで成功した。最初のowner auditはpnpmが転送した先頭の`--`を
 local parserが拒否し、fetch前に終了したためremote read/writeは発生していない。parser修正のcommitと
-通常CI成功後に同じread-only auditを再試行する。P5b3 remote mutationは未承認である。
+通常CIはcommit `28ef687`で成功した。既に成功していたmanual workflowに対しread-only auditを再試行し、
+sequence 4、policy epoch 0、public `heads/main` generation 1、remote writeなしを確認した。P5b2は完了した。
+P5b3 remote mutationは未承認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1140,7 +1142,7 @@ P5bは次の順で小さく進める。
 | P5b0 internal push preflight | 完了。commit `d01815e`と通常CI成功を確認 |
 | P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
 | P5b1b incremental push plan | 完了。commit `c96ada8`と通常CI成功を確認 |
-| P5b2 authenticated push adapter | commit `fdfe87b`/通常CI、承認記録`252bd94`/通常CI成功。owner audit parser修正待ち |
+| P5b2 authenticated push adapter | 完了。manual deployとread-only owner preflight成功、remote writeなし |
 | P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
 
 P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
@@ -1200,8 +1202,11 @@ staging公開、credential-free HTTP 401 audit、空inventoryによるread-only 
 この承認を記録したcommit `252bd94`と通常CIはgreenである。最初のoperator auditは標準の
 `pnpm run ... -- --origin ...`形式が転送する先頭のseparatorをlocal parserが拒否してfetch前に終了した。
 一つのoptional separatorを正規化し、直接実行形式とpnpm形式の両方を回帰テストする。parser修正の
-commit/通常CI成功後に限ってread-only auditを再試行する。manual workflowの成否はoperator報告で別途
-確定する。remote writeはさらにP5b3の別承認まで行わない。
+commit `28ef687`と通常CIはgreenである。main-only manual workflowは成功し、再試行したread-only owner
+auditもexit 0となった。snapshotはaccepted sequence 4、policy epoch 0、public `heads/main` generation 1で、
+project IDとtarget artifact IDはcontractに適合し、remote writeは行われていない。詳細は
+[`P5b2 remote evidence`](../evidence/p5b2-authenticated-public-push-adapter-remote-2026-08-27.md)を参照する。
+P5b2は完了した。remote writeはさらにP5b3の別承認まで行わない。
 
 API原則:
 
