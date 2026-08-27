@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 40（P5b3 staging write effectsの承認を記録）
+改訂: Revision 41（P5b3 remote retry/conflict proofを完了）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -693,7 +693,9 @@ P5b3では既存blob/treeを再利用するchange 1件の決定的fast-forward�
 再実行可能なoperator smokeとしてlocal実装する。初回効果はsequence 4→5、ref generation 1→2、
 Queue event 1件でありR2 writeはない。local実装commit `ca3d1fd`と通常CI成功後、account ownerは
 accepted/conflict operation resultを含む恒久staging効果を明示承認した。承認記録のcommit/通常CIまでは
-remote実行しない。
+remote実行しない。承認記録commit `53b1c6b`と通常CI成功後に一度実行し、initial stateからsequence 5、
+ref generation 2、accepted/conflict retry収束、stale artifact未受理、Queue delivered、R2 writeなしを
+確認した。P5b3は完了した。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1147,7 +1149,7 @@ P5bは次の順で小さく進める。
 | P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
 | P5b1b incremental push plan | 完了。commit `c96ada8`と通常CI成功を確認 |
 | P5b2 authenticated push adapter | 完了。manual deployとread-only owner preflight成功、remote writeなし |
-| P5b3 retry/conflict staging proof | local commit `ca3d1fd`/CI成功、remote効果承認済み。承認記録commit/CI待ち |
+| P5b3 retry/conflict staging proof | 完了。sequence 5/ref generation 2、retry/conflict/Queue収束、R2 writeなし |
 
 P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
 sorted/uniqueな最大256 artifact IDと256 blob IDを、RepositoryDOの一つの同期SQLite transactionで
@@ -1228,6 +1230,13 @@ local実装commit `ca3d1fd`と通常CIはgreenである。2026-08-27、account o
 sequence 4→5、public ref generation 1→2、sequence 5 Queue event、accepted operation result、artifactを
 追加しないstale siblingのconflict operation result、およびR2/members/production非変更を明示承認した。
 承認記録のcommit/通常CI成功前にtokenを入力せず、remote smokeを実行しない。
+
+承認記録commit `53b1c6b`と通常CI成功後、account ownerがremote smokeを一度実行した。開始状態は
+`initial`で、accepted sequence 5、policy epoch 0、public ref generation 2へ収束した。accepted retryと
+stale conflict retryはいずれも収束し、stale sibling artifactは未受理、sequence 5 eventは1回のsendで
+`delivered`、R2 writeはなかった。exit statusは0である。詳細は
+[`P5b3 remote evidence`](../evidence/p5b3-bounded-staging-push-proof-remote-2026-08-27.md)を参照する。
+P5b3は完了した。
 
 API原則:
 

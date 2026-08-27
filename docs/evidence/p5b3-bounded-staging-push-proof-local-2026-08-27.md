@@ -96,4 +96,7 @@ operation records.
 2. Only then may the owner run `cloud:smoke-public-push` once with the existing
    token supplied from the local environment.
 
-This evidence does not authorize remote mutation.
+The approval record was subsequently committed as `53b1c6b` and passed
+ordinary GitHub Actions. The remote execution and its outcome are recorded in
+the separate
+[`P5b3 remote evidence`](p5b3-bounded-staging-push-proof-remote-2026-08-27.md).

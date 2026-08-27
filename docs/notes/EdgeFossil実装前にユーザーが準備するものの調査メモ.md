@@ -1069,8 +1069,8 @@ ref、R2、Queue、members state、productionを変更していない。P5b2は�
 - [x] full local gateとnamed staging/production dry-runを通す。
 - [x] P5b3 local実装をcommitし、通常CIを通す（commit `ca3d1fd`）。
 - [x] 下記の恒久staging効果をaccount ownerが明示承認する。
-- [ ] 承認記録をcommitし、通常CIを通す。
-- [ ] ownerが手元のtokenでremote smokeを一度実行する。
+- [x] 承認記録をcommitし、通常CIを通す（commit `53b1c6b`）。
+- [x] ownerが手元のtokenでremote smokeを一度実行する。
 
 P5b3 local実装で新しいCloudflare resource、binding、secret、Dashboard設定は不要である。Worker codeや
 configurationも変えないため、このoperator toolだけを理由にmanual deployは行わない。remote実行前に
@@ -1095,6 +1095,11 @@ remote smokeを実行しない。承認後の実行コマンドと安全なtoken
 sequence/ref更新、Queue event 1件、accepted/conflict operation resultの永続記録だけを対象とする。
 stale sibling artifact、追加blob/tree、R2 write、schema/binding/secret/Worker変更、members/production変更は
 対象外であり、実装もこれらを行わない。承認記録のcommit/push/通常CI成功まではremote smokeを実行しない。
+
+承認記録commit `53b1c6b`と通常CI成功後、account ownerは一回限りのremote smokeを実行した。exit status 0、
+開始状態`initial`、accepted sequence 5、policy epoch 0、public ref generation 2、accepted/conflict retry
+収束、stale sibling artifact未受理、sequence 5 Queue event `delivered`、send attempts 1、R2 writeなしを
+確認した。token値は共有・記録されていない。P5b3は完了した。
 
 ### 必要になった時だけ行う
 
