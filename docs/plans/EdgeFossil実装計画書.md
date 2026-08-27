@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 39（P5b3 bounded staging push proofを具体化）
+改訂: Revision 40（P5b3 staging write effectsの承認を記録）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -691,7 +691,9 @@ local parserが拒否し、fetch前に終了したためremote read/writeは発�
 sequence 4、policy epoch 0、public `heads/main` generation 1、remote writeなしを確認した。P5b2は完了した。
 P5b3では既存blob/treeを再利用するchange 1件の決定的fast-forwardと、stale siblingのHTTP 409を
 再実行可能なoperator smokeとしてlocal実装する。初回効果はsequence 4→5、ref generation 1→2、
-Queue event 1件でありR2 writeはない。local実装と通常CI後も、別の明示承認まではremote実行しない。
+Queue event 1件でありR2 writeはない。local実装commit `ca3d1fd`と通常CI成功後、account ownerは
+accepted/conflict operation resultを含む恒久staging効果を明示承認した。承認記録のcommit/通常CIまでは
+remote実行しない。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1145,7 +1147,7 @@ P5bは次の順で小さく進める。
 | P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
 | P5b1b incremental push plan | 完了。commit `c96ada8`と通常CI成功を確認 |
 | P5b2 authenticated push adapter | 完了。manual deployとread-only owner preflight成功、remote writeなし |
-| P5b3 retry/conflict staging proof | local実装/gate完了。1 change/1 Queue event/R2 writeなし。commit/CI前、remote未承認 |
+| P5b3 retry/conflict staging proof | local commit `ca3d1fd`/CI成功、remote効果承認済み。承認記録commit/CI待ち |
 
 P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
 sorted/uniqueな最大256 artifact IDと256 blob IDを、RepositoryDOの一つの同期SQLite transactionで
@@ -1222,7 +1224,10 @@ blob、members/production変更はない。schema、binding、secret、Worker ro
 回帰テスト、full gate、named dry-run、commit/通常CIの後、上記の恒久staging効果を示してaccount ownerへ
 別承認を求める。local gateとnamed dry-runはgreenである。詳細は
 [`P5b3 local evidence`](../evidence/p5b3-bounded-staging-push-proof-local-2026-08-27.md)を参照する。
-承認前にtokenを入力せず、remote smokeを実行しない。
+local実装commit `ca3d1fd`と通常CIはgreenである。2026-08-27、account ownerはpublic change 1件、
+sequence 4→5、public ref generation 1→2、sequence 5 Queue event、accepted operation result、artifactを
+追加しないstale siblingのconflict operation result、およびR2/members/production非変更を明示承認した。
+承認記録のcommit/通常CI成功前にtokenを入力せず、remote smokeを実行しない。
 
 API原則:
 

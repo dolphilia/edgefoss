@@ -3,8 +3,8 @@
 - Date: 2026-08-27
 - Scope: reentrant operator smoke for one deterministic staging fast-forward,
   exact retries, stale-ref conflict, and Queue delivery
-- Result: local implementation and gates pass; commit/CI and remote approval
-  remain pending
+- Result: local implementation, commit `ca3d1fd`, ordinary CI, and explicit
+  remote-effects approval pass; approval-record commit/CI remains pending
 
 ## Implemented boundary
 
@@ -87,11 +87,13 @@ responses, awaits every request, and keeps request state local.
 
 ## Remaining gates
 
-1. commit, push, and ordinary GitHub Actions must pass;
-2. the exact permanent staging effects must be presented to the account owner;
-3. the owner must explicitly approve them;
-4. that approval record must itself be committed and pass ordinary CI;
-5. only then may the owner run `cloud:smoke-public-push` once with the existing
+The local implementation was committed as `ca3d1fd`, pushed, and passed
+ordinary GitHub Actions. On 2026-08-27, the account owner explicitly approved
+the exact permanent staging effects, including the accepted and stale-conflict
+operation records.
+
+1. The approval record must itself be committed and pass ordinary CI.
+2. Only then may the owner run `cloud:smoke-public-push` once with the existing
    token supplied from the local environment.
 
 This evidence does not authorize remote mutation.

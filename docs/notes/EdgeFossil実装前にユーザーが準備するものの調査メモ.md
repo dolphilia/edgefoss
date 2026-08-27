@@ -1067,8 +1067,8 @@ ref、R2、Queue、members state、productionを変更していない。P5b2は�
 - [x] accepted retry、stale HTTP 409 retry、final preflight、Queue deliveryをlocal testする。
 - [x] upload APIを呼ばず、R2 writeを発生させないことをlocal testする。
 - [x] full local gateとnamed staging/production dry-runを通す。
-- [ ] P5b3 local実装をcommitし、通常CIを通す。
-- [ ] 下記の恒久staging効果をaccount ownerが明示承認する。
+- [x] P5b3 local実装をcommitし、通常CIを通す（commit `ca3d1fd`）。
+- [x] 下記の恒久staging効果をaccount ownerが明示承認する。
 - [ ] 承認記録をcommitし、通常CIを通す。
 - [ ] ownerが手元のtokenでremote smokeを一度実行する。
 
@@ -1080,13 +1080,21 @@ configurationも変えないため、このoperator toolだけを理由にmanual
 - accepted sequenceを4から5へ進める。
 - public `heads/main`をgeneration 1から2へfast-forwardする。
 - sequence 5のoutbox/Queue eventを1件作り、consumer deliveryを待つ。
+- accepted operation resultを永続記録する。
 - stale sibling requestを二度送るが、artifactは追加せず、sequence/ref/outboxも変えない。
+- stale siblingのidempotent conflict operation resultを1件永続記録する。
 - 既存blob/treeを再利用し、upload APIとR2 writeは行わない。
 - schema、binding、secret、members state、productionは変更しない。
 - 同じcommandの再実行は既存accepted/conflict resultへ収束し、追加eventを作らない。
 
 local実装のcommit/push/通常CIと上記効果の承認記録commit/通常CIが成功するまでは、owner tokenを入力せず
 remote smokeを実行しない。承認後の実行コマンドと安全なtoken解除手順は、その段階で改めて提示する。
+
+2026-08-27、commit `ca3d1fd`の通常CI成功後、account ownerは上記効果を
+`P5b3 staging write effects: approved`として明示承認した。この承認はstagingの決定的change 1件、
+sequence/ref更新、Queue event 1件、accepted/conflict operation resultの永続記録だけを対象とする。
+stale sibling artifact、追加blob/tree、R2 write、schema/binding/secret/Worker変更、members/production変更は
+対象外であり、実装もこれらを行わない。承認記録のcommit/push/通常CI成功まではremote smokeを実行しない。
 
 ### 必要になった時だけ行う
 
