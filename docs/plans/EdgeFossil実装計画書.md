@@ -2,7 +2,7 @@
 
 作成日: 2026-08-24  
 最終レビュー: 2026-08-26
-改訂: Revision 36（P5b2 owner-authenticated push preflight adapterを具体化）
+改訂: Revision 37（P5b2 owner auditのpnpm引数境界と再試行gateを具体化）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -685,7 +685,9 @@ local-only plannerへ追加した。commit `c96ada8`と通常CIが成功した�
 cross-runtime HTTP testをlocal実装した。full local gateとnamed dry-runは成功し、commitと通常CIは
 `fdfe87b`で成功した。account ownerは新しいowner-only preflight routeのstaging公開、workflow内の
 credential-free HTTP 401 audit、その後のread-only owner preflightまでを明示承認した。manual deployは
-未実行であり、P5b3 remote mutationは未承認である。
+承認記録commit `252bd94`と通常CIまで成功した。最初のowner auditはpnpmが転送した先頭の`--`を
+local parserが拒否し、fetch前に終了したためremote read/writeは発生していない。parser修正のcommitと
+通常CI成功後に同じread-only auditを再試行する。P5b3 remote mutationは未承認である。
 
 ### P4: `single-do` cloud authority vertical slice（7–10 person-weeks）
 
@@ -1138,7 +1140,7 @@ P5bは次の順で小さく進める。
 | P5b0 internal push preflight | 完了。commit `d01815e`と通常CI成功を確認 |
 | P5b1a fresh cross-runtime push plan | 完了。commit `80dfc37`と通常CI成功を確認 |
 | P5b1b incremental push plan | 完了。commit `c96ada8`と通常CI成功を確認 |
-| P5b2 authenticated push adapter | commit `fdfe87b`/通常CI成功、staging公開承認済み。manual deploy待ち |
+| P5b2 authenticated push adapter | commit `fdfe87b`/通常CI、承認記録`252bd94`/通常CI成功。owner audit parser修正待ち |
 | P5b3 retry/conflict staging proof | 未着手。remote write効果を別承認gateで検証 |
 
 P5b0では[`ADR 0043`](../adr/0043-bounded-internal-public-push-preflight.md)に従い、local側が提示する
@@ -1195,8 +1197,11 @@ local verificationは
 [`P5b2 local evidence`](../evidence/p5b2-authenticated-public-push-adapter-local-2026-08-26.md)を参照する。
 full local gateとnamed dry-run、commit `fdfe87b`、通常CIはgreenである。account ownerは新routeの
 staging公開、credential-free HTTP 401 audit、空inventoryによるread-only owner preflightを明示承認した。
-この承認を記録したcommit/通常CI後、main-only manual workflowを一度実行する。remote writeはさらに
-P5b3の別承認まで行わない。
+この承認を記録したcommit `252bd94`と通常CIはgreenである。最初のoperator auditは標準の
+`pnpm run ... -- --origin ...`形式が転送する先頭のseparatorをlocal parserが拒否してfetch前に終了した。
+一つのoptional separatorを正規化し、直接実行形式とpnpm形式の両方を回帰テストする。parser修正の
+commit/通常CI成功後に限ってread-only auditを再試行する。manual workflowの成否はoperator報告で別途
+確定する。remote writeはさらにP5b3の別承認まで行わない。
 
 API原則:
 

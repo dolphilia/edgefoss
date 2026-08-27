@@ -8,12 +8,17 @@ function fail(message) {
 }
 
 export function parseArguments(arguments_) {
-  if (arguments_.length !== 2 || arguments_[0] !== "--origin") {
+  const normalizedArguments =
+    arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
+  if (
+    normalizedArguments.length !== 2 ||
+    normalizedArguments[0] !== "--origin"
+  ) {
     fail("usage: audit-worker-public-push --origin HTTPS_ORIGIN");
   }
   let origin;
   try {
-    origin = new URL(arguments_[1]);
+    origin = new URL(normalizedArguments[1]);
   } catch {
     fail("origin is not a valid URL");
   }

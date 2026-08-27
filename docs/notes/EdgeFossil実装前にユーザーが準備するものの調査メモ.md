@@ -1016,7 +1016,7 @@ preflight/publish、R2 write、Queue enqueueは行わない。P5b2で認証付�
 - [x] full local gateとnamed staging/production dry-runを通す。
 - [x] P5b2実装をcommitし、通常CIを通す（commit `fdfe87b`）。
 - [x] commit/通常CI後、新しいpreflight routeのstaging公開効果をaccount ownerが明示承認する。
-- [ ] 承認記録をcommitし、通常CIを通す。
+- [x] 承認記録をcommitし、通常CIを通す（commit `252bd94`）。
 - [ ] mainの`Deploy staging Worker` workflowを一度実行し、全step成功を確認する。
 - [ ] workflow成功後にread-only owner preflight auditを実行する。
 
@@ -1031,6 +1031,12 @@ ref/Queue/R2を変更するpush smokeはP5b3の別承認まで行わない。
 承認対象には新routeの到達可能化、credential-freeなHTTP 401 audit、空inventoryのauthenticated
 read-only preflightを含む。artifact upload/finalize、artifact/ref publish、R2 write、Queue enqueue、
 production変更は含まない。承認記録のcommit/通常CIが成功するまではmanual workflowを実行しない。
+
+最初のowner auditでは、下記の標準的なpnpm形式がscriptへ先頭の`--`を転送した一方、共通parserが
+`--origin`を第1引数として固定していたためusage errorとなった。これはtoken検査、HELLO、fetchより前の
+local失敗であり、stagingへのread/writeは発生していない。parserはoptionalな先頭separatorを1個だけ
+正規化し、直接形式とpnpm形式をともに受理しつつ、重複separatorや余分な引数を拒否する。修正のcommit、
+push、通常CI成功前にはauditを再試行しない。manual workflowの成功も別途確認してから再試行する。
 
 staging deployとworkflow内のHTTP 401 auditが成功した後、account ownerはrepository rootのterminalで次を
 実行する。tokenをcommand lineへ直接書かず、値を共有・貼付しない。

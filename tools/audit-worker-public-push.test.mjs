@@ -10,6 +10,7 @@ const ORIGIN = "https://edgefoss-staging.miga-and-raia.workers.dev";
 
 test("accepts only the exact approved staging origin", () => {
   assert.equal(parseArguments(["--origin", ORIGIN]).origin, ORIGIN);
+  assert.equal(parseArguments(["--", "--origin", ORIGIN]).origin, ORIGIN);
   for (const value of [
     "http://edgefoss-staging.miga-and-raia.workers.dev",
     `${ORIGIN}/path`,
@@ -20,6 +21,14 @@ test("accepts only the exact approved staging origin", () => {
     assert.throws(() => parseArguments(["--origin", value]), /origin/u);
   }
   assert.throws(() => parseArguments([]), /usage/u);
+  assert.throws(
+    () => parseArguments(["--", "--", "--origin", ORIGIN]),
+    /usage/u,
+  );
+  assert.throws(
+    () => parseArguments(["--", "--origin", ORIGIN, "extra"]),
+    /usage/u,
+  );
 });
 
 test("audits only the unauthenticated owner boundary", async () => {
