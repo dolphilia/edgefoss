@@ -1,8 +1,8 @@
 # EdgeFossil 実装計画書
 
 作成日: 2026-08-24  
-最終レビュー: 2026-08-26
-改訂: Revision 41（P5b3 remote retry/conflict proofを完了）
+最終レビュー: 2026-08-27
+改訂: Revision 42（P5c0 local linear reconciliationを実装）
 対象: EdgeFossil v0 から最初の一般公開版まで  
 文書種別: 実行計画。構想・調査結果を、実装順序、成果物、合格条件、判断 gate に変換したもの
 
@@ -996,7 +996,7 @@ P5は転送方向とconflictを分ける。
 |---|---|
 | P5a clone/pull | fresh local repositoryがcloudの一viewを復元 |
 | P5b push | local artifact/blobをidempotentにcloudへpublish |
-| P5c bidirectional | cursor resume、二端末、ref conflict、partial clone |
+| P5c bidirectional | P5c0 local linear reconciliationを実装。cursor resume、二端末orchestration、partial cloneは継続 |
 
 成果物:
 
@@ -1237,6 +1237,33 @@ stale conflict retryはいずれも収束し、stale sibling artifactは未受�
 `delivered`、R2 writeはなかった。exit statusは0である。詳細は
 [`P5b3 remote evidence`](../evidence/p5b3-bounded-staging-push-proof-remote-2026-08-27.md)を参照する。
 P5b3は完了した。
+
+P5cは正しい終端state transitionを先に固定し、network resumeとpartial cloneを分離して進める。
+
+| increment | 完了状態 |
+|---|---|
+| P5c0 local linear reconciliation | local実装、full gate、named dry-run完了。通常CI待ち |
+| P5c1 durable transfer resume | client側progress/cursor永続化とdisconnect再開 |
+| P5c2 two-device orchestration | local A/B/cloudの順序違い、push/pull/ref conflict保持 |
+| P5c3 partial clone | promised blob schemaと`metadata/source/history/complete` materialization |
+| P5c4 G5 scale/privacy closure | stale token、三者収束、million-artifact inventory判断 |
+
+P5c0では[`ADR 0048`](../adr/0048-transactional-linear-public-reconciliation.md)と
+[`public reconciliation v0`](../../spec/sync-v0.md)に従い、deep verify済みcomplete public bundleを
+既存local SQLiteへ適用する逆方向を追加した。oldest-to-newestのsingle-parent historyが同一ならno-op、
+localがremoteのprefixなら一transactionで不足artifact/blob/signatureとpublic refだけをfast-forward、
+remoteがlocalのprefixなら`LocalAhead`としてP5b push経路へ委ねる。どちらもprefixでない二端末headは
+`SyncHeadConflict`として両headを返し、timestamp、LWW、force push、自動mergeで選ばない。
+
+fast-forward前にlocalの全portable objectがremote bundle内でbyte-identicalであることを確認し、refは
+観測したlocal target/generationからCASする。commit前にaccepted public bundleを再構築してremote入力と
+完全一致させる。既存tracking ruleとworking snapshotはdevice-localのまま保持する。shared
+TypeScript-generated vectorによるgeneration 1→2、exact replay、remote ancestor、二端末sibling conflict、
+signature insert faultの全rollbackとretryがRustでgreenである。Worker route、DO schema、binding、secret、
+R2/Queue、staging/productionは変更せず、owner作業も不要である。詳細は
+[`P5c0 local evidence`](../evidence/p5c0-linear-public-reconciliation-local-2026-08-27.md)を参照する。
+full gateとnamed staging/production dry-runはgreenである。commit/通常CI成功後にP5c1へ進む。P5c0単独ではnetwork cursor resume、
+partial clone、members同期、G5完了を主張しない。
 
 API原則:
 

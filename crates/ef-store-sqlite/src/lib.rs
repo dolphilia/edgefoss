@@ -93,6 +93,7 @@ pub enum StoreError {
     InvalidImport(String),
     InvalidPushPlan(String),
     PushHeadConflict(String),
+    SyncHeadConflict { local: String, remote: String },
     RefConflict(String),
     Corrupt(String),
 }
@@ -117,6 +118,12 @@ impl fmt::Display for StoreError {
             Self::PushHeadConflict(target) => {
                 write!(formatter, "push head conflict: remote target {target}")
             }
+            Self::SyncHeadConflict { local, remote } => {
+                write!(
+                    formatter,
+                    "sync head conflict: local {local}, remote {remote}"
+                )
+            }
             Self::RefConflict(message) => write!(formatter, "checkpoint conflict: {message}"),
             Self::Corrupt(message) => write!(formatter, "repository corruption: {message}"),
         }
@@ -139,6 +146,7 @@ impl Error for StoreError {
             | Self::InvalidImport(_)
             | Self::InvalidPushPlan(_)
             | Self::PushHeadConflict(_)
+            | Self::SyncHeadConflict { .. }
             | Self::RefConflict(_)
             | Self::Corrupt(_) => None,
         }
@@ -378,6 +386,24 @@ pub struct ImportResult {
     pub realm: Realm,
     pub semantic_root: String,
     pub generation: u64,
+}
+
+/// Direction selected by comparing two complete linear public histories.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PublicReconcileOutcome {
+    AlreadyCurrent,
+    FastForwarded,
+    LocalAhead,
+}
+
+/// Result of reconciling a verified complete public bundle with local state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicReconcileResult {
+    pub outcome: PublicReconcileOutcome,
+    pub local_head: String,
+    pub remote_head: String,
+    pub generation: u64,
+    pub semantic_root: String,
 }
 
 /// Summary returned after provider-independent bundle verification.
@@ -1188,6 +1214,117 @@ impl LocalRepository {
         })
     }
 
+    /// Reconciles one verified complete public bundle with an initialized
+    /// local repository without overwriting divergent history.
+    ///
+    /// Equal history is an idempotent no-op. A remote descendant is imported
+    /// and advances `heads/main` in one transaction. A remote ancestor is
+    /// reported as [`PublicReconcileOutcome::LocalAhead`] so the caller can
+    /// use the push path. Divergent heads return
+    /// [`StoreError::SyncHeadConflict`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid/non-public bundle, another project,
+    /// divergent history, inconsistent prefix objects, or any storage/format
+    /// failure. Device-local tracking and working snapshots are left intact.
+    pub fn reconcile_public_bundle(
+        &mut self,
+        manifest_bytes: &[u8],
+        objects: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<PublicReconcileResult, StoreError> {
+        let verified = verify_portable_bundle(manifest_bytes, objects, &[])?;
+        let manifest = decode_bundle_manifest(manifest_bytes)?;
+        if manifest.realm != Realm::Public {
+            return Err(StoreError::InvalidImport(
+                "public reconciliation requires a public bundle".into(),
+            ));
+        }
+        let project_id = self.project_digest()?.ok_or(StoreError::Uninitialized)?;
+        if manifest.project != ef_format::format_artifact_id(&project_id) {
+            return Err(StoreError::InvalidImport(
+                "bundle project does not match the destination repository".into(),
+            ));
+        }
+        let genesis = self.project_genesis()?.ok_or(StoreError::Uninitialized)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let local = build_realm_bundle(
+            &transaction,
+            &project_id,
+            &manifest.project,
+            &genesis,
+            Realm::Public,
+            &[],
+        )?;
+        let local_history = linear_bundle_history(&local.manifest, &local.objects)?;
+        let remote_history = linear_bundle_history(&manifest, objects)?;
+        let local_head = local_history
+            .last()
+            .cloned()
+            .ok_or_else(|| StoreError::Corrupt("local public history has no change head".into()))?;
+        let remote_head = remote_history.last().cloned().ok_or_else(|| {
+            StoreError::InvalidImport("remote public history has no change head".into())
+        })?;
+
+        let outcome =
+            classify_linear_histories(&local_history, &remote_history).ok_or_else(|| {
+                StoreError::SyncHeadConflict {
+                    local: local_head.clone(),
+                    remote: remote_head.clone(),
+                }
+            })?;
+        match outcome {
+            PublicReconcileOutcome::AlreadyCurrent => {
+                if local.manifest != manifest || local.objects != *objects {
+                    return Err(StoreError::InvalidImport(
+                        "equal public head has different portable state".into(),
+                    ));
+                }
+                let generation = imported_generation(&local.manifest, &local.objects)?;
+                transaction.commit()?;
+                Ok(PublicReconcileResult {
+                    outcome,
+                    local_head,
+                    remote_head,
+                    generation,
+                    semantic_root: local.manifest.semantic_root,
+                })
+            }
+            PublicReconcileOutcome::LocalAhead => {
+                ensure_bundle_prefix(&manifest, objects, &local.manifest, &local.objects)?;
+                let generation = imported_generation(&local.manifest, &local.objects)?;
+                transaction.commit()?;
+                Ok(PublicReconcileResult {
+                    outcome,
+                    local_head,
+                    remote_head,
+                    generation,
+                    semantic_root: local.manifest.semantic_root,
+                })
+            }
+            PublicReconcileOutcome::FastForwarded => {
+                let generation = apply_public_fast_forward(
+                    &transaction,
+                    &project_id,
+                    &genesis,
+                    &local,
+                    &manifest,
+                    objects,
+                )?;
+                transaction.commit()?;
+                Ok(PublicReconcileResult {
+                    outcome,
+                    local_head,
+                    remote_head,
+                    generation,
+                    semantic_root: verified.semantic_root().to_owned(),
+                })
+            }
+        }
+    }
+
     /// Atomically stores a signed change and advances the realm checkpoint ref.
     ///
     /// The operation rechecks both the unsigned working root and ref generation
@@ -1457,6 +1594,217 @@ fn imported_generation(
         .count();
     u64::try_from(changes)
         .map_err(|_| StoreError::InvalidImport("imported generation is too large".into()))
+}
+
+fn linear_bundle_history(
+    manifest: &BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<String>, StoreError> {
+    let head = manifest
+        .refs
+        .iter()
+        .find(|(name, _)| name == CHECKPOINT_REF)
+        .map(|(_, target)| target.clone())
+        .ok_or_else(|| StoreError::InvalidImport("public heads/main is missing".into()))?;
+    let change_count = manifest
+        .artifacts
+        .iter()
+        .filter(|id| decode_change(&objects[&bundle_object_path("artifacts", id)]).is_ok())
+        .count();
+    let mut newest_first = Vec::with_capacity(change_count);
+    let mut seen = BTreeSet::new();
+    let mut next = Some(head);
+    while let Some(id) = next.take() {
+        if !seen.insert(id.clone()) {
+            return Err(StoreError::InvalidImport(
+                "public change history contains a cycle".into(),
+            ));
+        }
+        let path = bundle_object_path("artifacts", &id);
+        let change = objects
+            .get(&path)
+            .ok_or_else(|| StoreError::InvalidImport("public change is missing".into()))
+            .and_then(|body| decode_change(body).map_err(StoreError::from))?;
+        if change.meta.parents.len() > 1 {
+            return Err(StoreError::InvalidImport(
+                "public reconciliation supports only linear history".into(),
+            ));
+        }
+        newest_first.push(id);
+        next = change.meta.parents.first().cloned();
+    }
+    if newest_first.len() != change_count {
+        return Err(StoreError::InvalidImport(
+            "public bundle contains changes outside heads/main history".into(),
+        ));
+    }
+    newest_first.reverse();
+    Ok(newest_first)
+}
+
+fn classify_linear_histories(
+    local: &[String],
+    remote: &[String],
+) -> Option<PublicReconcileOutcome> {
+    if local == remote {
+        Some(PublicReconcileOutcome::AlreadyCurrent)
+    } else if remote.starts_with(local) {
+        Some(PublicReconcileOutcome::FastForwarded)
+    } else if local.starts_with(remote) {
+        Some(PublicReconcileOutcome::LocalAhead)
+    } else {
+        None
+    }
+}
+
+fn ensure_bundle_prefix(
+    prefix_manifest: &BundleManifest,
+    prefix_objects: &BTreeMap<String, Vec<u8>>,
+    complete_manifest: &BundleManifest,
+    complete_objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    if prefix_manifest.project != complete_manifest.project
+        || prefix_manifest.realm != complete_manifest.realm
+        || prefix_manifest.base_roots != complete_manifest.base_roots
+    {
+        return Err(StoreError::InvalidImport(
+            "reconciliation prefix identity differs".into(),
+        ));
+    }
+    for (path, body) in prefix_objects {
+        if complete_objects.get(path) != Some(body) {
+            return Err(StoreError::InvalidImport(
+                "reconciliation prefix object differs".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn insert_reconciled_public_suffix(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    local: &BundleManifest,
+    remote: &BundleManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    let local_artifacts = local.artifacts.iter().collect::<BTreeSet<_>>();
+    for id in remote
+        .artifacts
+        .iter()
+        .filter(|id| !local_artifacts.contains(id))
+    {
+        let body = &objects[&bundle_object_path("artifacts", id)];
+        let kind = if decode_tree(body).is_ok() {
+            "tree"
+        } else if decode_change(body).is_ok() {
+            "change"
+        } else {
+            return Err(StoreError::InvalidImport(
+                "reconciled artifact kind is unsupported".into(),
+            ));
+        };
+        let digest = parse_artifact_id(id)?;
+        transaction.execute(
+            "INSERT INTO artifacts(
+                 id, project_id, realm, kind, schema_version, canonical_body
+             ) VALUES (?1, ?2, 'public', ?3, 0, ?4)",
+            params![digest.as_slice(), project_id.as_slice(), kind, body],
+        )?;
+    }
+
+    let local_blobs = local.blobs.iter().collect::<BTreeSet<_>>();
+    for id in remote.blobs.iter().filter(|id| !local_blobs.contains(id)) {
+        let digest = parse_artifact_id(id)?;
+        transaction.execute(
+            "INSERT INTO blobs(project_id, realm, digest, content)
+             VALUES (?1, 'public', ?2, ?3)",
+            params![
+                project_id.as_slice(),
+                digest.as_slice(),
+                &objects[&bundle_object_path("blobs", id)]
+            ],
+        )?;
+    }
+
+    let local_signatures = local.signatures.iter().collect::<BTreeSet<_>>();
+    for id in remote
+        .signatures
+        .iter()
+        .filter(|id| !local_signatures.contains(id))
+    {
+        let body = &objects[&bundle_object_path("signatures", id)];
+        let record = decode_signature_record(body)?;
+        store_signature(transaction, project_id, &record, body)?;
+    }
+    Ok(())
+}
+
+fn apply_public_fast_forward(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &[u8; 32],
+    genesis: &ProjectGenesis,
+    local: &PortableBundle,
+    remote_manifest: &BundleManifest,
+    remote_objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<u64, StoreError> {
+    ensure_bundle_prefix(
+        &local.manifest,
+        &local.objects,
+        remote_manifest,
+        remote_objects,
+    )?;
+    insert_reconciled_public_suffix(
+        transaction,
+        project_id,
+        &local.manifest,
+        remote_manifest,
+        remote_objects,
+    )?;
+    let generation = imported_generation(remote_manifest, remote_objects)?;
+    let generation_i64 = i64::try_from(generation)
+        .map_err(|_| StoreError::InvalidImport("reconciled generation is too large".into()))?;
+    let local_history = linear_bundle_history(&local.manifest, &local.objects)?;
+    let remote_history = linear_bundle_history(remote_manifest, remote_objects)?;
+    let local_head = local_history
+        .last()
+        .ok_or_else(|| StoreError::Corrupt("local public history has no change head".into()))?;
+    let remote_head = remote_history.last().ok_or_else(|| {
+        StoreError::InvalidImport("remote public history has no change head".into())
+    })?;
+    let changed = transaction.execute(
+        "UPDATE refs SET target_id = ?1, generation = ?2
+         WHERE project_id = ?3 AND realm = 'public' AND name = ?4
+           AND target_id = ?5 AND generation = ?6",
+        params![
+            parse_artifact_id(remote_head)?.as_slice(),
+            generation_i64,
+            project_id.as_slice(),
+            CHECKPOINT_REF,
+            parse_artifact_id(local_head)?.as_slice(),
+            i64::try_from(local_history.len())
+                .map_err(|_| StoreError::InvalidImport("local generation is too large".into()))?
+        ],
+    )?;
+    if changed != 1 {
+        return Err(StoreError::RefConflict(
+            "public head changed during reconciliation".into(),
+        ));
+    }
+    let rebuilt = build_realm_bundle(
+        transaction,
+        project_id,
+        &remote_manifest.project,
+        genesis,
+        Realm::Public,
+        &[],
+    )?;
+    if rebuilt.manifest != *remote_manifest || rebuilt.objects != *remote_objects {
+        return Err(StoreError::InvalidImport(
+            "reconciled accepted state does not match the verified bundle".into(),
+        ));
+    }
+    Ok(generation)
 }
 
 fn validate_export_base_roots(
@@ -3048,8 +3396,8 @@ mod tests {
     };
 
     use super::{
-        LocalRepository, MIGRATION_1, SCHEMA_VERSION, StoreError, TrackingCounts, TrackingMode,
-        TrackingRule, TrackingScope,
+        LocalRepository, MIGRATION_1, PublicReconcileOutcome, SCHEMA_VERSION, StoreError,
+        TrackingCounts, TrackingMode, TrackingRule, TrackingScope,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use edgefoss_core::{SnapshotInput, SnapshotInputKind, build_realm_snapshots};
@@ -4331,6 +4679,149 @@ mod tests {
         target
             .import_bundle(&public.manifest_bytes, &public.objects, &[])
             .unwrap();
+    }
+
+    #[test]
+    fn public_reconciliation_preserves_two_device_divergence() {
+        let (mut source, genesis, project, signing_key) = signed_repository();
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "shared base",
+        );
+        let base = source.export_bundle(Realm::Public, &[]).unwrap();
+        let mut local_a = LocalRepository::open_in_memory().unwrap();
+        let mut local_b = LocalRepository::open_in_memory().unwrap();
+        for repository in [&mut local_a, &mut local_b] {
+            repository
+                .import_bundle(&base.manifest_bytes, &base.objects, &[])
+                .unwrap();
+            let snapshot = build_realm_snapshots(
+                &project,
+                genesis.actor_key,
+                &genesis.created_at,
+                &[SnapshotInput {
+                    path: "file.txt".into(),
+                    realm: Realm::Public,
+                    kind: SnapshotInputKind::File {
+                        bytes: b"signed".to_vec(),
+                        executable: false,
+                    },
+                }],
+            )
+            .unwrap();
+            repository
+                .replace_working_snapshots(&snapshot, "2026-08-24T00:00:03Z")
+                .unwrap();
+        }
+        commit_realm(
+            &mut local_a,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:04Z",
+            "device A",
+        );
+        commit_realm(
+            &mut local_b,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:04Z",
+            "device B",
+        );
+        let before = local_a.export_bundle(Realm::Public, &[]).unwrap();
+        let remote = local_b.export_bundle(Realm::Public, &[]).unwrap();
+        assert!(matches!(
+            local_a.reconcile_public_bundle(&remote.manifest_bytes, &remote.objects),
+            Err(StoreError::SyncHeadConflict { .. })
+        ));
+        assert_eq!(local_a.export_bundle(Realm::Public, &[]).unwrap(), before);
+
+        let current = local_a
+            .reconcile_public_bundle(&before.manifest_bytes, &before.objects)
+            .unwrap();
+        assert_eq!(current.outcome, PublicReconcileOutcome::AlreadyCurrent);
+    }
+
+    #[test]
+    fn failed_public_fast_forward_rolls_back_and_retries() {
+        let (mut source, genesis, project, signing_key) = signed_repository();
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:02Z",
+            "base",
+        );
+        let base = source.export_bundle(Realm::Public, &[]).unwrap();
+        commit_realm(
+            &mut source,
+            &signing_key,
+            Realm::Public,
+            "2026-08-24T00:00:03Z",
+            "descendant",
+        );
+        let remote = source.export_bundle(Realm::Public, &[]).unwrap();
+        let mut target = LocalRepository::open_in_memory().unwrap();
+        target
+            .import_bundle(&base.manifest_bytes, &base.objects, &[])
+            .unwrap();
+        let snapshot = build_realm_snapshots(
+            &project,
+            genesis.actor_key,
+            &genesis.created_at,
+            &[SnapshotInput {
+                path: "file.txt".into(),
+                realm: Realm::Public,
+                kind: SnapshotInputKind::File {
+                    bytes: b"signed".to_vec(),
+                    executable: false,
+                },
+            }],
+        )
+        .unwrap();
+        target
+            .replace_working_snapshots(&snapshot, "2026-08-24T00:00:04Z")
+            .unwrap();
+        let working_root = super::query_working_root(
+            &target.connection,
+            &parse_artifact_id(&project).unwrap(),
+            Realm::Public,
+        )
+        .unwrap();
+        target
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER fail_reconcile_signature
+                 BEFORE INSERT ON signatures
+                 BEGIN SELECT RAISE(ABORT, 'injected reconciliation failure'); END;",
+            )
+            .unwrap();
+
+        assert!(matches!(
+            target.reconcile_public_bundle(&remote.manifest_bytes, &remote.objects),
+            Err(StoreError::Sqlite(_))
+        ));
+        assert_eq!(target.export_bundle(Realm::Public, &[]).unwrap(), base);
+        target
+            .connection
+            .execute("DROP TRIGGER fail_reconcile_signature", [])
+            .unwrap();
+        let retry = target
+            .reconcile_public_bundle(&remote.manifest_bytes, &remote.objects)
+            .unwrap();
+        assert_eq!(retry.outcome, PublicReconcileOutcome::FastForwarded);
+        assert_eq!(target.export_bundle(Realm::Public, &[]).unwrap(), remote);
+        assert_eq!(
+            super::query_working_root(
+                &target.connection,
+                &parse_artifact_id(&project).unwrap(),
+                Realm::Public
+            )
+            .unwrap(),
+            working_root
+        );
     }
 
     #[test]

@@ -1202,6 +1202,17 @@ custom domain
 
 ---
 
+### P5c0 local linear reconciliationでは追加準備を行わない
+
+P5b3完了後のP5c0は、既存local SQLiteとdeep verify済みcomplete public bundleの間で
+`already current`、pull fast-forward、local ahead、head conflictを判定・適用するlocal-only
+incrementである。Worker route、Durable Object schema、R2/Queue、binding、secret、resource、
+staging/productionを変更せず、Cloudflareへ接続するcommandもない。
+
+したがってaccount ownerが準備・取得・設定するものはない。既存owner tokenを入力せず、Dashboard操作、
+deploy、remote smoke、追加承認も求めない。通常CI成功後にP5c1へ進み、将来のincrementが新しいremote公開面や
+恒久state変更を必要とする時だけ、その具体的効果を先に示して別gateを設ける。
+
 ## 参考資料
 
 ### Account / authentication
